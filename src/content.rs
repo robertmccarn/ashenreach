@@ -100,9 +100,6 @@ pub struct MapDefinition {
     pub rows: Vec<String>,
 }
 
-/// Central index. Every definition is immutable after a successful load.
-/// `reload` builds a replacement index first, so failed reloads keep the last
-/// known-good content available.
 const CONTENT_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +108,7 @@ struct ContentManifest {
     format_version: u32,
 }
 
+/// Central index. Every definition is immutable after a successful load.
 #[derive(Clone, Debug, Default)]
 pub struct ContentManager {
     root: PathBuf,
@@ -633,7 +631,7 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_exit_is_rejected_but_doors_are_traversable() {
+    fn unreachable_exit_is_rejected_when_a_wall_blocks_the_route() {
         let fixture = Fixture::new();
         fixture.write("maps/test_map.json", r#"{"id":"test_map","name":"Test Map","rows":["#########","#S.D#..X#","#########"]}"#);
         assert!(fixture.errors().iter().any(|error| error.contains("unreachable")));
