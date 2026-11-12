@@ -1,5 +1,6 @@
 mod console;
 mod content;
+mod content_root;
 mod debug;
 mod game;
 mod player;
@@ -109,7 +110,9 @@ fn console_input(debug: &mut DebugState) -> bool {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let mut content = match ContentManager::load("content") {
+    let content_root = content_root::resolve_default_content_root()
+        .unwrap_or_else(|error| panic!("Content root resolution failed: {error}"));
+    let mut content = match ContentManager::load(&content_root) {
         Ok(content) => content,
         Err(errors) => panic!("Content validation failed:\n{}", errors.join("\n")),
     };
