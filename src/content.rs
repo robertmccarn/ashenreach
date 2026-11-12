@@ -189,6 +189,10 @@ impl ContentManager {
         Ok(())
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn item(&self, id: &str) -> Result<&ItemDefinition, String> {
         self.get(&self.items, "item", id)
     }

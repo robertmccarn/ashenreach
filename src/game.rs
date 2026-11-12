@@ -109,10 +109,7 @@ pub fn apply_command(game: &mut Game, command: Command) -> Result<CommandRespons
             game.state = GameState::Completed;
             Ok(CommandResponse::Message("Level completed".to_owned()))
         }
-        Command::Restart => {
-            *game = Game::new();
-            Ok(CommandResponse::Message("Level restarted".to_owned()))
-        }
+        Command::Restart => Err("restart must be dispatched through RuntimeSession".to_owned()),
         Command::ReloadContent => Err("reload_content must be handled by the content service".to_owned()),
         Command::Help => Ok(CommandResponse::Message(
             "Commands: tp <x> <y>, speed <n>, fov <deg>, open_all, close_all, win, restart, reload_content, help"
