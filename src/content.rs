@@ -342,10 +342,9 @@ where
             .iter_errors(&document)
             .map(|error| format!("{}: schema validation: {error}", path.display()))
             .collect();
-        if !schema_errors.is_empty() {
-            errors.extend(schema_errors);
-            continue;
-        }
+        // Keep checking the DTO and semantic rules after a schema failure so
+        // diagnostics can include more specific field and map-coordinate context.
+        errors.extend(schema_errors);
 
         match serde_json::from_value::<T>(document) {
             Ok(value) => {
@@ -591,6 +590,13 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write("items/test_item.json", r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":-1.0}"#);
         assert!(fixture.errors().iter().any(|error| error.contains("items/test_item.json")));
+    }
+
+    #[test]
+    fn invalid_map_glyph_reports_coordinates() {
+        let fixture = Fixture::new();
+        fixture.write("maps/test_map.json", r#"{"id":"test_map","name":"Test Map","rows":["#####","#S?X#","#####"]}"#);
+        assert!(fixture.errors().iter().any(|error| error.contains("(2,1)")));
     }
 
     #[test]
