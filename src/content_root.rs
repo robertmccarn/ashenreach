@@ -47,6 +47,47 @@ pub fn resolve_default_content_root() -> Result<PathBuf, ContentRootError> {
     resolve_content_root(None, &working_directory)
 }
 
+/// Startup inputs that affect application-wide content selection.
+///
+/// Keeping this boundary separate from `ContentManager` lets future callers
+/// provide an explicit root without changing content loading or validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartupConfig {
+    content_root: Option<PathBuf>,
+}
+
+impl Default for StartupConfig {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+impl StartupConfig {
+    pub fn new(content_root: Option<PathBuf>) -> Self {
+        Self { content_root }
+    }
+
+    pub fn resolve_content_root(&self) -> Result<PathBuf, ContentRootError> {
+        if self.content_root.is_none() {
+            return resolve_default_content_root();
+        }
+        let working_directory = env::current_dir().map_err(|error| {
+            ContentRootError::new(
+                format!("cannot determine the process working directory: {error}"),
+                Vec::new(),
+            )
+        })?;
+        self.resolve_content_root_from(&working_directory)
+    }
+
+    fn resolve_content_root_from(
+        &self,
+        working_directory: &Path,
+    ) -> Result<PathBuf, ContentRootError> {
+        resolve_content_root(self.content_root.as_deref(), working_directory)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentRootError {
     reason: String,
@@ -98,7 +139,7 @@ fn is_directory(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_content_root;
+    use super::{StartupConfig, resolve_content_root};
     use crate::content::ContentManager;
     use std::{
         fs,
@@ -212,5 +253,38 @@ mod tests {
 
         assert!(errors.iter().any(|error| error.contains("manifest.json")));
         assert!(errors.iter().any(|error| error.contains("format_version")));
+    }
+
+    #[test]
+    fn default_startup_configuration_selects_working_directory_content() {
+        let fixture = Fixture::new(true);
+        let config = StartupConfig::default();
+        let resolved = config
+            .resolve_content_root_from(&fixture.working_directory)
+            .unwrap();
+        assert_eq!(resolved, fixture.working_directory.join("content"));
+    }
+
+    #[test]
+    fn explicit_startup_configuration_reaches_the_resolver() {
+        let fixture = Fixture::new(true);
+        let explicit = fixture.explicit_root();
+        let config = StartupConfig::new(Some(explicit.clone()));
+        let resolved = config
+            .resolve_content_root_from(&fixture.working_directory)
+            .unwrap();
+        assert_eq!(resolved, explicit);
+    }
+
+    #[test]
+    fn invalid_explicit_startup_configuration_does_not_fall_back() {
+        let fixture = Fixture::new(true);
+        let missing = fixture.root.join("missing");
+        let config = StartupConfig::new(Some(missing.clone()));
+        let error = config
+            .resolve_content_root_from(&fixture.working_directory)
+            .unwrap_err();
+        assert_eq!(error.attempted(), &[missing]);
+        assert!(error.to_string().contains("explicitly supplied"));
     }
 }

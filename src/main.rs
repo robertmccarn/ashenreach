@@ -110,7 +110,9 @@ fn console_input(debug: &mut DebugState) -> bool {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let content_root = content_root::resolve_default_content_root()
+    let startup_config = content_root::StartupConfig::default();
+    let content_root = startup_config
+        .resolve_content_root()
         .unwrap_or_else(|error| panic!("Content root resolution failed: {error}"));
     let mut content = match ContentManager::load(&content_root) {
         Ok(content) => content,
