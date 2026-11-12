@@ -1,6 +1,7 @@
 //! Versioned, validated authored content. Runtime state belongs in simulation;
 //! this module only owns immutable definitions loaded from `content/`.
 
+use crate::reachability::flood_fill;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -106,6 +107,7 @@ pub struct MapDefinition {
 #[derive(Clone, Debug, Default)]
 pub struct ContentManager {
     root: PathBuf,
+    source_paths: HashMap<String, PathBuf>,
     pub items: HashMap<String, ItemDefinition>,
     pub enemies: HashMap<String, EnemyDefinition>,
     pub loot_tables: HashMap<String, LootTableDefinition>,
@@ -145,11 +147,35 @@ impl ContentManager {
             ..Self::default()
         };
         let mut errors = Vec::new();
-        result.items = load_directory(&root, "items", "item", &mut errors);
-        result.enemies = load_directory(&root, "enemies", "enemy", &mut errors);
-        result.loot_tables = load_directory(&root, "loot_tables", "loot_table", &mut errors);
-        result.encounters = load_directory(&root, "encounters", "encounter", &mut errors);
-        result.maps = load_directory(&root, "maps", "map", &mut errors);
+        result.items = load_directory(
+            &root,
+            "items",
+            "item",
+            &mut result.source_paths,
+            &mut errors,
+        );
+        result.enemies = load_directory(
+            &root,
+            "enemies",
+            "enemy",
+            &mut result.source_paths,
+            &mut errors,
+        );
+        result.loot_tables = load_directory(
+            &root,
+            "loot_tables",
+            "loot_table",
+            &mut result.source_paths,
+            &mut errors,
+        );
+        result.encounters = load_directory(
+            &root,
+            "encounters",
+            "encounter",
+            &mut result.source_paths,
+            &mut errors,
+        );
+        result.maps = load_directory(&root, "maps", "map", &mut result.source_paths, &mut errors);
         result.validate(&mut errors);
         if errors.is_empty() {
             Ok(result)
@@ -187,83 +213,95 @@ impl ContentManager {
             .ok_or_else(|| format!("missing {kind} definition with id `{id}`"))
     }
 
+    fn definition_path(&self, directory: &str, id: &str) -> String {
+        let key = format!("{directory}/{id}");
+        match self.source_paths.get(&key) {
+            Some(path) => path.display().to_string(),
+            None => self
+                .root
+                .join(directory)
+                .join(format!("{id}.json"))
+                .display()
+                .to_string(),
+        }
+    }
+
     fn validate(&self, errors: &mut Vec<String>) {
         for enemy in self.enemies.values() {
-            if enemy.stats.health == 0
-                || enemy.stats.move_speed <= 0.0
-                || !enemy.stats.move_speed.is_finite()
-            {
-                errors.push(format!("enemies/{}.json: stats.health must be > 0 and stats.move_speed must be finite and > 0", enemy.id));
+            let path = self.definition_path("enemies", &enemy.id);
+            if enemy.stats.health == 0 {
+                errors.push(format!("{path}: stats.health must be > 0"));
+            }
+            if !enemy.stats.move_speed.is_finite() {
+                errors.push(format!("{path}: stats.move_speed must be finite"));
+            } else if enemy.stats.move_speed <= 0.0 {
+                errors.push(format!("{path}: stats.move_speed must be > 0"));
             }
             if !self.loot_tables.contains_key(&enemy.loot_table_id) {
                 errors.push(format!(
-                    "enemies/{}.json: loot_table_id `{}` does not exist in loot_tables",
-                    enemy.id, enemy.loot_table_id
+                    "{path}: loot_table_id `{}` does not exist in loot_tables",
+                    enemy.loot_table_id
                 ));
             }
         }
         for loot in self.loot_tables.values() {
+            let path = self.definition_path("loot_tables", &loot.id);
             if loot.rolls == 0 || loot.entries.is_empty() {
-                errors.push(format!(
-                    "loot_tables/{}.json: rolls and entries must both be non-zero",
-                    loot.id
-                ));
+                if loot.rolls == 0 {
+                    errors.push(format!("{path}: rolls must be > 0"));
+                }
+                if loot.entries.is_empty() {
+                    errors.push(format!("{path}: entries must not be empty"));
+                }
             }
-            for entry in &loot.entries {
+            for (index, entry) in loot.entries.iter().enumerate() {
                 if entry.weight == 0 {
-                    errors.push(format!(
-                        "loot_tables/{}.json: item `{}` has zero weight",
-                        loot.id, entry.item_id
-                    ));
+                    errors.push(format!("{path}: entries[{index}].weight must be > 0"));
                 }
                 if !self.items.contains_key(&entry.item_id) {
                     errors.push(format!(
-                        "loot_tables/{}.json: item_id `{}` does not exist in items",
-                        loot.id, entry.item_id
+                        "{path}: entries[{index}].item_id `{}` does not exist in items",
+                        entry.item_id,
                     ));
                 }
             }
         }
         for encounter in self.encounters.values() {
+            let path = self.definition_path("encounters", &encounter.id);
             if encounter.enemies.is_empty() {
-                errors.push(format!(
-                    "encounters/{}.json: enemies must not be empty",
-                    encounter.id
-                ));
+                errors.push(format!("{path}: enemies must not be empty"));
             }
-            for spawn in &encounter.enemies {
+            for (index, spawn) in encounter.enemies.iter().enumerate() {
                 if spawn.count == 0 {
-                    errors.push(format!(
-                        "encounters/{}.json: enemy `{}` has count 0",
-                        encounter.id, spawn.enemy_id
-                    ));
+                    errors.push(format!("{path}: enemies[{index}].count must be > 0"));
                 }
                 if !self.enemies.contains_key(&spawn.enemy_id) {
                     errors.push(format!(
-                        "encounters/{}.json: enemy_id `{}` does not exist in enemies",
-                        encounter.id, spawn.enemy_id
+                        "{path}: enemies[{index}].enemy_id `{}` does not exist in enemies",
+                        spawn.enemy_id,
                     ));
                 }
             }
         }
         for item in self.items.values() {
-            if item.name.trim().is_empty() || !item.weight.is_finite() || item.weight < 0.0 {
-                errors.push(format!(
-                    "items/{}.json: name is required and weight must be finite and >= 0",
-                    item.id
-                ));
+            let path = self.definition_path("items", &item.id);
+            if item.name.trim().is_empty() {
+                errors.push(format!("{path}: name must not be empty"));
+            }
+            if !item.weight.is_finite() {
+                errors.push(format!("{path}: weight must be finite"));
+            } else if item.weight < 0.0 {
+                errors.push(format!("{path}: weight must be >= 0"));
             }
             if let Some(damage) = &item.damage {
                 if damage.min > damage.max {
-                    errors.push(format!(
-                        "items/{}.json: damage.min must be <= damage.max",
-                        item.id
-                    ));
+                    errors.push(format!("{path}: damage.min must be <= damage.max"));
                 }
             }
         }
         for map in self.maps.values() {
-            validate_map(map, errors);
+            let path = self.definition_path("maps", &map.id);
+            validate_map(map, &path, errors);
         }
     }
 }
@@ -280,6 +318,7 @@ fn load_directory<T: for<'a> Deserialize<'a>>(
     root: &Path,
     directory_name: &str,
     schema_name: &str,
+    source_paths: &mut HashMap<String, PathBuf>,
     errors: &mut Vec<String>,
 ) -> HashMap<String, T>
 where
@@ -367,6 +406,9 @@ where
         match serde_json::from_value::<T>(document) {
             Ok(value) => {
                 let id = value.id().to_owned();
+                source_paths
+                    .entry(format!("{directory_name}/{id}"))
+                    .or_insert_with(|| path.clone());
                 if !valid_id(&id) {
                     errors.push(format!(
                         "{}: id `{id}` must use lowercase letters, digits, `_`, or `-`",
@@ -407,45 +449,86 @@ fn valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
 }
 
-fn validate_map(map: &MapDefinition, errors: &mut Vec<String>) {
+fn validate_map(map: &MapDefinition, path: &str, errors: &mut Vec<String>) {
     if map.rows.is_empty() {
-        errors.push(format!("maps/{}.json: rows must not be empty", map.id));
+        errors.push(format!(
+            "{path}: map `{}` rows must contain at least one row",
+            map.id
+        ));
         return;
     }
-    let width = map.rows[0].len();
-    let mut starts = 0;
-    let mut exits = 0;
-    for (line, row) in map.rows.iter().enumerate() {
-        if row.len() != width {
+
+    let grid: Vec<Vec<char>> = map.rows.iter().map(|row| row.chars().collect()).collect();
+    let width = grid[0].len();
+    let mut rectangular = true;
+    let mut supported_glyphs = true;
+    let mut starts = Vec::new();
+    let mut exits = Vec::new();
+
+    for (y, row) in grid.iter().enumerate() {
+        if row.is_empty() {
             errors.push(format!(
-                "maps/{}.json: rows[{line}] has width {}, expected {width}",
+                "{path}: map `{}` rows[{y}] must not be empty",
+                map.id
+            ));
+        }
+        if row.len() != width {
+            rectangular = false;
+            errors.push(format!(
+                "{path}: map `{}` rows[{y}] has width {}, expected {width}",
                 map.id,
                 row.len()
             ));
         }
-        for cell in row.bytes() {
+        for (x, &cell) in row.iter().enumerate() {
             match cell {
-                b'#' | b'.' | b'D' => {}
-                b'S' => starts += 1,
-                b'X' => exits += 1,
-                _ => errors.push(format!(
-                    "maps/{}.json: rows[{line}] has unsupported tile `{}`",
-                    map.id, cell as char
-                )),
+                '#' | '.' | 'D' => {}
+                'S' => starts.push((x, y)),
+                'X' => exits.push((x, y)),
+                _ => {
+                    supported_glyphs = false;
+                    errors.push(format!(
+                        "{path}: map `{}` has unsupported tile `{cell}` at ({x}, {y})",
+                        map.id
+                    ));
+                }
             }
         }
     }
-    if starts != 1 {
+
+    if starts.len() != 1 {
         errors.push(format!(
-            "maps/{}.json: exactly one `S` start is required; found {starts}",
+            "{path}: map `{}` requires exactly one `S` start; found {} at {starts:?}",
+            map.id,
+            starts.len()
+        ));
+    }
+    if exits.is_empty() {
+        errors.push(format!(
+            "{path}: map `{}` requires at least one `X` exit",
             map.id
         ));
     }
-    if exits == 0 {
+
+    if !rectangular || !supported_glyphs || starts.len() != 1 || exits.is_empty() || width == 0 {
+        return;
+    }
+
+    let start = starts[0];
+    let Some(reachable) = flood_fill(width, grid.len(), start, |x, y| grid[y][x] != '#') else {
         errors.push(format!(
-            "maps/{}.json: at least one `X` exit is required",
+            "{path}: map `{}` dimensions are too large to validate connectivity",
             map.id
         ));
+        return;
+    };
+    for (x, y) in exits {
+        if !reachable[y * width + x] {
+            errors.push(format!(
+                "{path}: map `{}` exit at ({x}, {y}) is unreachable from start at ({}, {})",
+                map.id, start.0, start.1
+            ));
+        }
     }
 }
 
@@ -634,6 +717,348 @@ mod tests {
                 .errors()
                 .iter()
                 .any(|error| error.contains("item.json"))
+        );
+    }
+
+    fn diagnostics(fixture: &Fixture) -> String {
+        fixture.errors().join("\n").replace('\\', "/")
+    }
+
+    #[test]
+    fn invalid_ids_report_the_source_file_and_id_field() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"Bad ID","name":"Bad Item","kind":"weapon","value":1,"weight":1.0}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("items/item.json"), "{errors}");
+        assert!(errors.contains("id `Bad ID`"), "{errors}");
+    }
+
+    #[test]
+    fn duplicate_ids_report_the_duplicate_source_file() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/duplicate.json",
+            r#"{"id":"test_item","name":"Duplicate","kind":"weapon","value":1,"weight":1.0}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("items/item.json: duplicate items id `test_item`")
+                || errors.contains("items/duplicate.json: duplicate items id `test_item`"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn missing_enemy_loot_table_reference_reports_its_field() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "enemies/enemy.json",
+            r#"{"id":"test_enemy","name":"Test Enemy","stats":{"health":5,"attack":1,"defense":0,"move_speed":1.0},"loot_table_id":"missing_loot"}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("enemies/enemy.json"), "{errors}");
+        assert!(errors.contains("loot_table_id `missing_loot`"), "{errors}");
+    }
+
+    #[test]
+    fn missing_loot_item_reference_reports_its_field() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "loot_tables/loot.json",
+            r#"{"id":"test_loot","rolls":1,"entries":[{"item_id":"missing_item","weight":1,"quantity":1}]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("loot_tables/loot.json"), "{errors}");
+        assert!(
+            errors.contains("entries[0].item_id `missing_item`"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn missing_encounter_enemy_reference_reports_its_field() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "encounters/encounter.json",
+            r#"{"id":"test_encounter","name":"Test Encounter","enemies":[{"enemy_id":"missing_enemy","count":1}]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("encounters/encounter.json"), "{errors}");
+        assert!(
+            errors.contains("enemies[0].enemy_id `missing_enemy`"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn item_weight_and_damage_range_constraints_report_fields() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":-1.0,"damage":{"min":8,"max":2}}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("items/item.json"), "{errors}");
+        assert!(errors.contains("weight must be >= 0"), "{errors}");
+        assert!(
+            errors.contains("damage.min must be <= damage.max"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn non_finite_item_weight_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":1e100}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("items/item.json"), "{errors}");
+        assert!(errors.contains("weight must be finite"), "{errors}");
+    }
+
+    #[test]
+    fn enemy_health_and_movement_speed_constraints_report_fields() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "enemies/enemy.json",
+            r#"{"id":"test_enemy","name":"Test Enemy","stats":{"health":0,"attack":1,"defense":0,"move_speed":0},"loot_table_id":"test_loot"}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("enemies/enemy.json"), "{errors}");
+        assert!(errors.contains("stats.health must be > 0"), "{errors}");
+        assert!(errors.contains("stats.move_speed must be > 0"), "{errors}");
+    }
+
+    #[test]
+    fn non_finite_enemy_movement_speed_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "enemies/enemy.json",
+            r#"{"id":"test_enemy","name":"Test Enemy","stats":{"health":5,"attack":1,"defense":0,"move_speed":1e100},"loot_table_id":"test_loot"}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("enemies/enemy.json"), "{errors}");
+        assert!(
+            errors.contains("stats.move_speed must be finite"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn loot_rolls_weights_and_encounter_counts_must_be_positive() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "loot_tables/loot.json",
+            r#"{"id":"test_loot","rolls":0,"entries":[{"item_id":"test_item","weight":0,"quantity":1}]}"#,
+        );
+        fixture.write(
+            "encounters/encounter.json",
+            r#"{"id":"test_encounter","name":"Test Encounter","enemies":[{"enemy_id":"test_enemy","count":0}]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("loot_tables/loot.json: rolls must be > 0"),
+            "{errors}"
+        );
+        assert!(errors.contains("entries[0].weight must be > 0"), "{errors}");
+        assert!(errors.contains("encounters/encounter.json"), "{errors}");
+        assert!(errors.contains("enemies[0].count must be > 0"), "{errors}");
+    }
+
+    #[test]
+    fn loot_tables_require_at_least_one_entry() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "loot_tables/loot.json",
+            r#"{"id":"test_loot","rolls":1,"entries":[]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("loot_tables/loot.json"), "{errors}");
+        assert!(errors.contains("entries must not be empty"), "{errors}");
+    }
+
+    #[test]
+    fn empty_map_rows_report_map_file_and_row() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["S.X",""]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("maps/map.json"), "{errors}");
+        assert!(errors.contains("rows[1] must not be empty"), "{errors}");
+    }
+
+    #[test]
+    fn ragged_map_rows_report_the_map_and_row_width() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r###"{"id":"test_map","name":"Test Map","rows":["S.X","##"]}"###,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("maps/map.json"), "{errors}");
+        assert!(
+            errors.contains("rows[1] has width 2, expected 3"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn unsupported_map_glyph_reports_its_coordinate() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["S?X"]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("maps/map.json"), "{errors}");
+        assert!(
+            errors.contains("unsupported tile `?` at (1, 0)"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn map_requires_one_start_and_at_least_one_exit() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["..X"]}"#,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("requires exactly one `S` start; found 0"),
+            "{errors}"
+        );
+
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["SSX"]}"#,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("requires exactly one `S` start; found 2"),
+            "{errors}"
+        );
+
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["S.."]}"#,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("requires at least one `X` exit"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn every_map_exit_must_be_reachable_from_the_start() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["S#X"]}"#,
+        );
+
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("maps/map.json"), "{errors}");
+        assert!(
+            errors.contains("map `test_map` exit at (2, 0) is unreachable from start at (0, 0)"),
+            "{errors}"
+        );
+
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["S.X#X"]}"#,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("map `test_map` exit at (4, 0) is unreachable"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn multiple_reachable_exits_are_accepted() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["SXX"]}"#,
+        );
+
+        assert!(ContentManager::load(&fixture.0).is_ok());
+    }
+
+    #[test]
+    fn all_exits_connected_through_a_door_are_accepted() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#########"{"id":"test_map","name":"Test Map","rows":["########","#S..#..#","#...D.X#","#...#..#","########"]}"#########,
+        );
+
+        let content = ContentManager::load(&fixture.0).expect("door is traversable for validation");
+        let world = crate::world::World::from_map(content.maps.get("test_map").unwrap()).unwrap();
+        assert!(world.reachable_exit_from_start());
+    }
+
+    #[test]
+    fn boundary_exits_and_small_maps_are_supported() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":["SX"]}"#,
+        );
+
+        assert!(ContentManager::load(&fixture.0).is_ok());
+    }
+
+    #[test]
+    fn empty_and_blocked_maps_have_actionable_errors() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "maps/map.json",
+            r#"{"id":"test_map","name":"Test Map","rows":[]}"#,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(errors.contains("maps/map.json"), "{errors}");
+        assert!(
+            errors.contains("rows must contain at least one row"),
+            "{errors}"
+        );
+
+        fixture.write(
+            "maps/map.json",
+            r####"{"id":"test_map","name":"Test Map","rows":["###"]}"####,
+        );
+        let errors = diagnostics(&fixture);
+        assert!(
+            errors.contains("requires exactly one `S` start"),
+            "{errors}"
+        );
+        assert!(
+            errors.contains("requires at least one `X` exit"),
+            "{errors}"
         );
     }
 }
