@@ -116,16 +116,40 @@ pub struct ContentManager {
 impl ContentManager {
     pub fn load(root: impl Into<PathBuf>) -> Result<Self, Vec<String>> {
         let root = root.into();
+        let manifest_path = root.join("manifest.json");
+        let manifest_text = fs::read_to_string(&manifest_path).map_err(|error| {
+            vec![format!(
+                "{}: cannot read manifest: {error}",
+                manifest_path.display()
+            )]
+        })?;
+        let manifest: ContentManifest = serde_json::from_str(&manifest_text).map_err(|error| {
+            vec![format!(
+                "{}:{}:{}: invalid manifest: {error}",
+                manifest_path.display(),
+                error.line(),
+                error.column()
+            )]
+        })?;
+        if manifest.format_version != CONTENT_FORMAT_VERSION {
+            return Err(vec![format!(
+                "{}: unsupported format_version {}; supported version is {}",
+                manifest_path.display(),
+                manifest.format_version,
+                CONTENT_FORMAT_VERSION
+            )]);
+        }
+
         let mut result = Self {
             root: root.clone(),
             ..Self::default()
         };
         let mut errors = Vec::new();
-        result.items = load_directory(&root, "items", &mut errors);
-        result.enemies = load_directory(&root, "enemies", &mut errors);
-        result.loot_tables = load_directory(&root, "loot_tables", &mut errors);
-        result.encounters = load_directory(&root, "encounters", &mut errors);
-        result.maps = load_directory(&root, "maps", &mut errors);
+        result.items = load_directory(&root, "items", "item", &mut errors);
+        result.enemies = load_directory(&root, "enemies", "enemy", &mut errors);
+        result.loot_tables = load_directory(&root, "loot_tables", "loot_table", &mut errors);
+        result.encounters = load_directory(&root, "encounters", "encounter", &mut errors);
+        result.maps = load_directory(&root, "maps", "map", &mut errors);
         result.validate(&mut errors);
         if errors.is_empty() {
             Ok(result)
@@ -244,15 +268,60 @@ impl ContentManager {
     }
 }
 
+const CONTENT_FORMAT_VERSION: u32 = 1;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContentManifest {
+    format_version: u32,
+}
+
 fn load_directory<T: for<'a> Deserialize<'a>>(
     root: &Path,
-    kind: &str,
+    directory_name: &str,
+    schema_name: &str,
     errors: &mut Vec<String>,
 ) -> HashMap<String, T>
 where
     T: HasId,
 {
-    let directory = root.join(kind);
+    let schema_path = root
+        .join("schemas")
+        .join(format!("{schema_name}.schema.json"));
+    let schema_text = match fs::read_to_string(&schema_path) {
+        Ok(text) => text,
+        Err(error) => {
+            errors.push(format!(
+                "{}: cannot read schema: {error}",
+                schema_path.display()
+            ));
+            return HashMap::new();
+        }
+    };
+    let schema: serde_json::Value = match serde_json::from_str(&schema_text) {
+        Ok(schema) => schema,
+        Err(error) => {
+            errors.push(format!(
+                "{}:{}:{}: invalid schema JSON: {error}",
+                schema_path.display(),
+                error.line(),
+                error.column()
+            ));
+            return HashMap::new();
+        }
+    };
+    let validator = match jsonschema::validator_for(&schema) {
+        Ok(validator) => validator,
+        Err(error) => {
+            errors.push(format!(
+                "{}: invalid JSON Schema: {error}",
+                schema_path.display()
+            ));
+            return HashMap::new();
+        }
+    };
+
+    let directory = root.join(directory_name);
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) => {
@@ -276,7 +345,26 @@ where
                 continue;
             }
         };
-        match serde_json::from_str::<T>(&text) {
+        let document: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                errors.push(format!(
+                    "{}:{}:{}: invalid {directory_name} JSON: {error}",
+                    path.display(),
+                    error.line(),
+                    error.column()
+                ));
+                continue;
+            }
+        };
+        for error in validator.iter_errors(&document) {
+            errors.push(format!(
+                "{}: schema validation failed at {}: {error}",
+                path.display(),
+                error.instance_path
+            ));
+        }
+        match serde_json::from_value::<T>(document) {
             Ok(value) => {
                 let id = value.id().to_owned();
                 if !valid_id(&id) {
@@ -285,14 +373,15 @@ where
                         path.display()
                     ));
                 } else if values.insert(id.clone(), value).is_some() {
-                    errors.push(format!("{}: duplicate {kind} id `{id}`", path.display()));
+                    errors.push(format!(
+                        "{}: duplicate {directory_name} id `{id}`",
+                        path.display()
+                    ));
                 }
             }
             Err(error) => errors.push(format!(
-                "{}:{}:{}: invalid {kind} JSON: {error}",
+                "{}: invalid {directory_name} definition: {error}",
                 path.display(),
-                error.line(),
-                error.column()
             )),
         }
     }
@@ -363,8 +452,188 @@ fn validate_map(map: &MapDefinition, errors: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::ContentManager;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "ashen-reach-a1-content-test-{}-{id}",
+                std::process::id()
+            ));
+            for directory in [
+                "schemas",
+                "items",
+                "enemies",
+                "loot_tables",
+                "encounters",
+                "maps",
+            ] {
+                fs::create_dir_all(root.join(directory)).unwrap();
+            }
+            let source_schemas = Path::new(env!("CARGO_MANIFEST_DIR")).join("content/schemas");
+            for schema in ["item", "enemy", "loot_table", "encounter", "map"] {
+                fs::copy(
+                    source_schemas.join(format!("{schema}.schema.json")),
+                    root.join("schemas").join(format!("{schema}.schema.json")),
+                )
+                .unwrap();
+            }
+            let fixture = Self(root);
+            fixture.write("manifest.json", r#"{"format_version":1}"#);
+            fixture.write(
+                "items/item.json",
+                r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":1.0}"#,
+            );
+            fixture.write("enemies/enemy.json", r#"{"id":"test_enemy","name":"Test Enemy","stats":{"health":5,"attack":1,"defense":0,"move_speed":1.0},"loot_table_id":"test_loot"}"#);
+            fixture.write("loot_tables/loot.json", r#"{"id":"test_loot","rolls":1,"entries":[{"item_id":"test_item","weight":1,"quantity":1}]}"#);
+            fixture.write("encounters/encounter.json", r#"{"id":"test_encounter","name":"Test Encounter","enemies":[{"enemy_id":"test_enemy","count":1}]}"#);
+            fixture.write(
+                "maps/map.json",
+                r######"{"id":"test_map","name":"Test Map","rows":["#####","#S.X#","#####"]}"######,
+            );
+            fixture
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.0.join(relative);
+            fs::write(path, contents).unwrap();
+        }
+
+        fn errors(&self) -> Vec<String> {
+            ContentManager::load(&self.0).expect_err("invalid fixture should be rejected")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
-    fn shipped_content_is_valid() {
-        assert!(ContentManager::load("content").is_ok());
+    fn shipped_content_passes_all_five_schemas_and_dto_deserialization() {
+        let content = ContentManager::load("content").expect("shipped content should validate");
+        assert!(!content.items.is_empty());
+        assert!(!content.enemies.is_empty());
+        assert!(!content.loot_tables.is_empty());
+        assert!(!content.encounters.is_empty());
+        assert!(!content.maps.is_empty());
+    }
+
+    #[test]
+    fn manifest_version_one_is_accepted() {
+        let fixture = Fixture::new();
+        assert!(ContentManager::load(&fixture.0).is_ok());
+    }
+
+    #[test]
+    fn missing_manifest_is_rejected_with_path() {
+        let fixture = Fixture::new();
+        fs::remove_file(fixture.0.join("manifest.json")).unwrap();
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("manifest.json"))
+        );
+    }
+
+    #[test]
+    fn unsupported_manifest_version_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.write("manifest.json", r#"{"format_version":2}"#);
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("unsupported format_version"))
+        );
+    }
+
+    #[test]
+    fn malformed_manifest_is_rejected_with_path() {
+        let fixture = Fixture::new();
+        fixture.write("manifest.json", "{");
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("manifest.json"))
+        );
+    }
+
+    #[test]
+    fn missing_manifest_version_is_rejected() {
+        let fixture = Fixture::new();
+        fixture.write("manifest.json", "{}");
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("format_version"))
+        );
+    }
+
+    #[test]
+    fn schema_rejects_unknown_fields_with_file_context() {
+        let fixture = Fixture::new();
+        fixture.write("items/item.json", r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":1.0,"extra":true}"#);
+        let errors = fixture.errors().join("\n");
+        assert!(errors.contains("item.json"));
+        assert!(errors.contains("extra") || errors.contains("schema validation"));
+    }
+
+    #[test]
+    fn schema_rejects_missing_required_fields() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"test_item","name":"Test Item","kind":"weapon","weight":1.0}"#,
+        );
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("item.json"))
+        );
+    }
+
+    #[test]
+    fn schema_rejects_invalid_property_types() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":"one","weight":1.0}"#,
+        );
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("item.json"))
+        );
+    }
+
+    #[test]
+    fn schema_rejects_invalid_numeric_constraints() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "items/item.json",
+            r#"{"id":"test_item","name":"Test Item","kind":"weapon","value":1,"weight":-1.0}"#,
+        );
+        assert!(
+            fixture
+                .errors()
+                .iter()
+                .any(|error| error.contains("item.json"))
+        );
     }
 }
