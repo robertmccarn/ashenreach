@@ -1,12 +1,15 @@
+mod console;
+mod debug;
 mod game;
 mod player;
 mod render;
 mod world;
 
-use game::{Game, GameState, target_tile};
+use console::{SettingChange, parse_command};
+use debug::DebugState;
+use game::{CommandResponse, Game, GameState, apply_command};
 use macroquad::prelude::*;
-use player::{Input, Player};
-use world::{Tile, World};
+use player::{Input, MovementSettings};
 
 const FIXED_STEP: f32 = 1.0 / 60.0;
 
@@ -19,13 +22,7 @@ fn window_conf() -> Conf {
     }
 }
 
-fn new_level() -> (World, Player, Game) {
-    let world = World::prototype_dungeon();
-    let (x, y) = world.start_position();
-    (world, Player::new(x, y), Game::new())
-}
-
-fn input_state() -> Input {
+fn gameplay_input() -> Input {
     Input {
         forward: is_key_down(KeyCode::W) || is_key_down(KeyCode::Up),
         backward: is_key_down(KeyCode::S) || is_key_down(KeyCode::Down),
@@ -37,88 +34,208 @@ fn input_state() -> Input {
     }
 }
 
+fn execute_console(debug: &mut DebugState, game: &mut Game) {
+    let source = std::mem::take(&mut debug.console_input);
+    if source.trim().is_empty() {
+        return;
+    }
+    debug.log(format!("> {source}"));
+    match parse_command(&source) {
+        Err(error) => debug.log(format!("Error: {error}")),
+        Ok(command) => match apply_command(game, command) {
+            Err(error) => debug.log(format!("Error: {error}")),
+            Ok(CommandResponse::Message(message)) => debug.log(message),
+            Ok(CommandResponse::Setting(SettingChange::Speed(value))) => {
+                debug.speed_multiplier = value;
+                debug.log(format!("Speed multiplier set to {value:.2}"));
+            }
+            Ok(CommandResponse::Setting(SettingChange::Fov(value))) => {
+                debug.fov_degrees = value;
+                debug.log(format!("FOV set to {value:.1} degrees"));
+            }
+        },
+    }
+}
+
+fn console_input(debug: &mut DebugState) -> bool {
+    if is_key_pressed(KeyCode::GraveAccent) {
+        debug.console_open = !debug.console_open;
+        debug.console_input.clear();
+        debug.log(if debug.console_open {
+            "Console opened"
+        } else {
+            "Console closed"
+        });
+        return true;
+    }
+    if !debug.console_open {
+        return false;
+    }
+    if is_key_pressed(KeyCode::Escape) {
+        debug.console_open = false;
+        debug.console_input.clear();
+        return true;
+    }
+    if is_key_pressed(KeyCode::Backspace) {
+        debug.console_input.pop();
+    }
+    if is_key_pressed(KeyCode::Enter) {
+        return true;
+    }
+    while let Some(character) = get_char_pressed() {
+        if !character.is_control() && character != '`' {
+            debug.console_input.push(character);
+        }
+    }
+    false
+}
+
 #[macroquad::main(window_conf)]
 async fn main() {
-    let (mut world, mut player, mut game) = new_level();
+    let mut game = Game::new();
+    let mut debug = DebugState::new();
     let mut accumulator = 0.0;
     let mut pending_interaction = false;
 
     loop {
-        if is_key_pressed(KeyCode::Escape) {
-            break;
+        let console_was_open = debug.console_open;
+        let console_consumed_frame = console_input(&mut debug) || console_was_open;
+        if console_consumed_frame && debug.console_open && is_key_pressed(KeyCode::Enter) {
+            execute_console(&mut debug, &mut game);
+            accumulator = 0.0;
         }
-        if game.state == GameState::Completed {
-            if is_key_pressed(KeyCode::R) {
-                (world, player, game) = new_level();
-                accumulator = 0.0;
-                pending_interaction = false;
+        if !debug.console_open && !console_consumed_frame {
+            if is_key_pressed(KeyCode::Escape) {
+                break;
             }
-            clear_background(Color::from_rgba(13, 16, 22, 255));
-            draw_text("LEVEL COMPLETE", 300.0, 230.0, 42.0, GOLD);
-            draw_text(
-                format!("Time: {:.1} seconds", game.elapsed_seconds),
-                340.0,
-                290.0,
-                26.0,
-                WHITE,
-            );
-            draw_text(
-                format!("Steps taken: {}", player.steps_taken),
-                360.0,
-                330.0,
-                26.0,
-                WHITE,
-            );
-            draw_text("Press R to play again", 365.0, 400.0, 22.0, LIGHTGRAY);
-            next_frame().await;
-            continue;
+            if game.state == GameState::Completed && is_key_pressed(KeyCode::R) {
+                game = Game::new();
+                accumulator = 0.0;
+            }
+            if is_key_pressed(KeyCode::F3) {
+                debug.overlay_visible = !debug.overlay_visible;
+            }
+            if is_key_pressed(KeyCode::F4) {
+                debug.noclip = !debug.noclip;
+                debug.log(format!(
+                    "Noclip {}",
+                    if debug.noclip { "enabled" } else { "disabled" }
+                ));
+            }
+            if is_key_pressed(KeyCode::F5) {
+                debug.fog = !debug.fog;
+            }
+            if is_key_pressed(KeyCode::F6) {
+                debug.minimap = !debug.minimap;
+            }
+            if is_key_pressed(KeyCode::F7) {
+                debug.show_rays = !debug.show_rays;
+                if debug.show_rays {
+                    debug.minimap = true;
+                }
+            }
         }
 
-        let mut frame_input = input_state();
-        pending_interaction |= frame_input.interact;
-        accumulator += get_frame_time().min(0.25);
-        while accumulator >= FIXED_STEP {
-            frame_input.interact = pending_interaction;
-            game.update(&mut world, &mut player, frame_input, FIXED_STEP);
+        let frame_time = get_frame_time();
+        let mut fixed_steps = 0;
+        if !debug.console_open && !console_consumed_frame && game.state == GameState::Playing {
+            let mut input = gameplay_input();
+            pending_interaction |= input.interact;
+            input.interact = false;
+            accumulator += frame_time.min(0.25);
+            while accumulator >= FIXED_STEP {
+                input.interact = pending_interaction;
+                game.update(
+                    input,
+                    MovementSettings {
+                        noclip: debug.noclip,
+                        speed_multiplier: debug.speed_multiplier,
+                    },
+                    FIXED_STEP,
+                );
+                pending_interaction = false;
+                input.interact = false;
+                accumulator -= FIXED_STEP;
+                fixed_steps += 1;
+            }
+        } else {
+            accumulator = 0.0;
             pending_interaction = false;
-            frame_input.interact = false;
-            accumulator -= FIXED_STEP;
         }
 
         clear_background(BLACK);
-        render::draw_world(&world, &player);
-        draw_text(
-            "ASHEN REACH  |  WASD move  |  arrows / Q-E turn",
-            18.0,
-            28.0,
-            22.0,
-            WHITE,
-        );
-        draw_text(
-            format!(
-                "Position {:.1}, {:.1}   Steps {}",
-                player.x, player.y, player.steps_taken
-            ),
-            18.0,
-            screen_height() - 18.0,
-            18.0,
-            LIGHTGRAY,
-        );
-        if let Some((x, y)) = target_tile(&world, &player) {
-            let prompt = match world.tile_at(x, y) {
-                Tile::Door { open: true } => "Press F or Space to close",
-                Tile::Door { open: false } => "Press F or Space to open",
-                Tile::Exit => "Press F or Space to exit",
-                Tile::Floor | Tile::Wall => "",
-            };
+        if game.state == GameState::Completed {
+            draw_completion(&game);
+        } else {
+            render::draw_world(&game.world, &game.player, debug.fov_degrees, debug.fog);
             draw_text(
-                prompt,
-                screen_width() * 0.5 - 130.0,
-                screen_height() * 0.78,
-                24.0,
-                GOLD,
+                "ASHEN REACH  |  WASD move  |  arrows / Q-E turn",
+                18.0,
+                28.0,
+                22.0,
+                WHITE,
+            );
+            draw_text(
+                format!(
+                    "Position {:.1}, {:.1}   Steps {}",
+                    game.player.x, game.player.y, game.player.steps_taken
+                ),
+                18.0,
+                screen_height() - 18.0,
+                18.0,
+                LIGHTGRAY,
             );
         }
+        if debug.overlay_visible || debug.minimap || debug.console_open {
+            debug::draw_debug(&debug, &game, frame_time, fixed_steps);
+        }
         next_frame().await;
+    }
+}
+
+fn draw_completion(game: &Game) {
+    draw_rectangle(
+        0.0,
+        0.0,
+        screen_width(),
+        screen_height(),
+        Color::from_rgba(13, 16, 22, 255),
+    );
+    draw_text("LEVEL COMPLETE", 300.0, 230.0, 42.0, GOLD);
+    draw_text(
+        format!("Time: {:.1} seconds", game.elapsed_seconds),
+        340.0,
+        290.0,
+        26.0,
+        WHITE,
+    );
+    draw_text(
+        format!("Steps taken: {}", game.player.steps_taken),
+        360.0,
+        330.0,
+        26.0,
+        WHITE,
+    );
+    draw_text(
+        "Press R to restart or ` for the console",
+        300.0,
+        390.0,
+        22.0,
+        LIGHTGRAY,
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::debug::DebugState;
+
+    #[test]
+    fn debug_state_starts_hidden_with_default_overrides() {
+        let state = DebugState::new();
+        assert!(!state.overlay_visible);
+        assert!(!state.noclip);
+        assert!(state.fog);
+        assert_eq!(state.speed_multiplier, 1.0);
+        assert_eq!(state.fov_degrees, 60.0);
     }
 }

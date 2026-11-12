@@ -1,5 +1,6 @@
 use crate::{
-    player::{Input, Player},
+    console::{Command, SettingChange},
+    player::{Input, MovementSettings, Player},
     world::{Tile, World},
 };
 
@@ -13,28 +14,34 @@ pub enum GameState {
 pub struct Game {
     pub state: GameState,
     pub elapsed_seconds: f32,
+    pub world: World,
+    pub player: Player,
 }
 
 impl Game {
     pub fn new() -> Self {
+        let world = World::prototype_dungeon();
+        let (x, y) = world.start_position();
         Self {
             state: GameState::Playing,
             elapsed_seconds: 0.0,
+            world,
+            player: Player::new(x, y),
         }
     }
 
-    pub fn update(&mut self, world: &mut World, player: &mut Player, input: Input, dt: f32) {
+    pub fn update(&mut self, input: Input, settings: MovementSettings, dt: f32) {
         if self.state == GameState::Completed {
             return;
         }
         self.elapsed_seconds += dt;
-        player.update(world, input, dt);
+        self.player.update(&self.world, input, settings, dt);
         if input.interact
-            && let Some((x, y)) = target_tile(world, player)
+            && let Some((x, y)) = target_tile(&self.world, &self.player)
         {
-            match world.tile_at(x, y) {
+            match self.world.tile_at(x, y) {
                 Tile::Door { .. } => {
-                    world.toggle_door(x, y);
+                    self.world.toggle_door(x, y);
                 }
                 Tile::Exit => self.state = GameState::Completed,
                 Tile::Floor | Tile::Wall => {}
@@ -58,6 +65,59 @@ pub fn target_tile(world: &World, player: &Player) -> Option<(isize, isize)> {
     None
 }
 
+pub fn apply_command(game: &mut Game, command: Command) -> Result<CommandResponse, String> {
+    match command {
+        Command::Teleport(x, y) => {
+            if !x.is_finite() || !y.is_finite() {
+                return Err("tp coordinates must be finite numbers".to_owned());
+            }
+            let (width, height) = game.world.dimensions();
+            let (tile_x, tile_y) = (x.floor() as isize, y.floor() as isize);
+            if tile_x < 0 || tile_y < 0 || tile_x >= width as isize || tile_y >= height as isize {
+                return Err("tp target is outside the map".to_owned());
+            }
+            if game.world.is_blocking(x.floor() + 0.5, y.floor() + 0.5) {
+                return Err("tp target is a wall or closed door".to_owned());
+            }
+            game.player.x = x.floor() + 0.5;
+            game.player.y = y.floor() + 0.5;
+            Ok(CommandResponse::Message(format!(
+                "Teleported to tile {tile_x}, {tile_y}"
+            )))
+        }
+        Command::Speed(multiplier) => {
+            Ok(CommandResponse::Setting(SettingChange::Speed(multiplier)))
+        }
+        Command::Fov(degrees) => Ok(CommandResponse::Setting(SettingChange::Fov(degrees))),
+        Command::OpenAll => {
+            game.world.set_all_doors(true);
+            Ok(CommandResponse::Message("Opened every door".to_owned()))
+        }
+        Command::CloseAll => {
+            game.world.set_all_doors(false);
+            Ok(CommandResponse::Message("Closed every door".to_owned()))
+        }
+        Command::Win => {
+            game.state = GameState::Completed;
+            Ok(CommandResponse::Message("Level completed".to_owned()))
+        }
+        Command::Restart => {
+            *game = Game::new();
+            Ok(CommandResponse::Message("Level restarted".to_owned()))
+        }
+        Command::Help => Ok(CommandResponse::Message(
+            "Commands: tp <x> <y>, speed <n>, fov <deg>, open_all, close_all, win, restart, help"
+                .to_owned(),
+        )),
+    }
+}
+
+#[derive(Debug)]
+pub enum CommandResponse {
+    Message(String),
+    Setting(SettingChange),
+}
+
 impl Default for Game {
     fn default() -> Self {
         Self::new()
@@ -66,34 +126,59 @@ impl Default for Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{Game, GameState};
+    use super::{CommandResponse, Game, GameState, apply_command};
     use crate::{
-        player::{Input, Player},
-        world::World,
+        console::{Command, SettingChange},
+        player::{Input, MovementSettings},
     };
 
     #[test]
-    fn interaction_toggles_a_door_and_completes_at_exit() {
-        let mut world = World::prototype_dungeon();
-        let mut player = Player::new(4.5, 1.5);
-        let interact = Input {
-            interact: true,
-            ..Input::default()
-        };
+    fn teleport_rejects_out_of_bounds_and_wall_tiles() {
         let mut game = Game::new();
-        game.update(&mut world, &mut player, interact, 1.0 / 60.0);
-        assert!(!world.is_blocking(5.5, 1.5));
-
-        player.x = 12.5;
-        player.y = 1.5;
-        player.angle = 0.0;
-        game.update(&mut world, &mut player, interact, 1.0 / 60.0);
-        assert_eq!(game.state, GameState::Completed);
+        assert!(
+            apply_command(&mut game, Command::Teleport(-1.0, 0.0))
+                .unwrap_err()
+                .contains("outside")
+        );
+        assert!(
+            apply_command(&mut game, Command::Teleport(0.0, 0.0))
+                .unwrap_err()
+                .contains("wall")
+        );
     }
 
     #[test]
-    fn identical_fixed_step_inputs_produce_identical_results() {
-        let inputs = [
+    fn open_all_and_close_all_update_every_door() {
+        let mut game = Game::new();
+        apply_command(&mut game, Command::OpenAll).unwrap();
+        assert!(game.world.all_doors_open());
+        apply_command(&mut game, Command::CloseAll).unwrap();
+        assert!(game.world.all_doors_closed());
+    }
+
+    #[test]
+    fn noclip_allows_movement_through_walls() {
+        let mut game = Game::new();
+        game.player.x = 3.5;
+        game.player.y = 2.5;
+        game.player.angle = std::f32::consts::PI;
+        let input = Input {
+            forward: true,
+            ..Input::default()
+        };
+        let settings = MovementSettings {
+            noclip: true,
+            speed_multiplier: 1.0,
+        };
+        for _ in 0..60 {
+            game.update(input, settings, 1.0 / 60.0);
+        }
+        assert!(game.player.x < 3.0);
+    }
+
+    #[test]
+    fn fixed_step_input_sequence_remains_deterministic() {
+        let sequence = [
             Input {
                 forward: true,
                 ..Input::default()
@@ -109,17 +194,56 @@ mod tests {
             Input::default(),
         ];
         let simulate = || {
-            let mut world = World::prototype_dungeon();
-            let (x, y) = world.start_position();
-            let mut player = Player::new(x, y);
             let mut game = Game::new();
-            for input in inputs {
+            for input in sequence {
                 for _ in 0..10 {
-                    game.update(&mut world, &mut player, input, 1.0 / 60.0);
+                    game.update(input, MovementSettings::default(), 1.0 / 60.0);
                 }
             }
-            (player, game.state, game.elapsed_seconds)
+            game
         };
-        assert_eq!(simulate(), simulate());
+        let first = simulate();
+        let second = simulate();
+        assert_eq!(first.player, second.player);
+        assert_eq!(first.state, second.state);
+    }
+
+    #[test]
+    fn interaction_toggles_a_door_and_completes_at_exit() {
+        let mut game = Game::new();
+        game.player.x = 4.5;
+        game.player.y = 1.5;
+        let interact = Input {
+            interact: true,
+            ..Input::default()
+        };
+        game.update(interact, MovementSettings::default(), 1.0 / 60.0);
+        assert!(!game.world.is_blocking(5.5, 1.5));
+
+        game.player.x = 12.5;
+        game.player.y = 1.5;
+        game.player.angle = 0.0;
+        game.update(interact, MovementSettings::default(), 1.0 / 60.0);
+        assert_eq!(game.state, GameState::Completed);
+    }
+
+    #[test]
+    fn command_settings_are_returned_for_debug_state_to_apply() {
+        let mut game = Game::new();
+        assert!(matches!(
+            apply_command(&mut game, Command::Speed(2.0)).unwrap(),
+            CommandResponse::Setting(SettingChange::Speed(2.0))
+        ));
+        assert!(matches!(
+            apply_command(&mut game, Command::Fov(90.0)).unwrap(),
+            CommandResponse::Setting(SettingChange::Fov(90.0))
+        ));
+    }
+
+    #[test]
+    fn win_command_completes_the_level() {
+        let mut game = Game::new();
+        apply_command(&mut game, Command::Win).unwrap();
+        assert_eq!(game.state, GameState::Completed);
     }
 }

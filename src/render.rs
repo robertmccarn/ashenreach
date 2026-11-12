@@ -2,8 +2,7 @@ use macroquad::prelude::*;
 
 use crate::{player::Player, world::World};
 
-const FOV: f32 = 1.05;
-const RAY_COUNT: usize = 240;
+pub const RAY_COUNT: usize = 240;
 
 fn cast_ray(world: &World, player: &Player, angle: f32) -> (f32, bool, crate::world::Tile) {
     let (dx, dy) = (angle.cos(), angle.sin());
@@ -27,7 +26,7 @@ fn cast_ray(world: &World, player: &Player, angle: f32) -> (f32, bool, crate::wo
     (20.0, false, crate::world::Tile::Wall)
 }
 
-pub fn draw_world(world: &World, player: &Player) {
+pub fn draw_world(world: &World, player: &Player, fov_degrees: f32, fog: bool) {
     let width = screen_width();
     let height = screen_height();
     draw_rectangle(
@@ -47,11 +46,15 @@ pub fn draw_world(world: &World, player: &Player) {
     let strip_width = width / RAY_COUNT as f32;
     for ray in 0..RAY_COUNT {
         let offset = ray as f32 / RAY_COUNT as f32 - 0.5;
-        let angle_offset = offset * FOV;
+        let angle_offset = offset * fov_degrees.to_radians();
         let (distance, side, tile) = cast_ray(world, player, player.angle + angle_offset);
         let corrected_distance = (distance * angle_offset.cos()).max(0.05);
         let wall_height = (height / corrected_distance).min(height * 2.0);
-        let shade = (220.0 / (1.0 + corrected_distance * 0.32)) as u8;
+        let shade = if fog {
+            (220.0 / (1.0 + corrected_distance * 0.32)) as u8
+        } else {
+            220
+        };
         let shade = if side {
             shade.saturating_sub(38)
         } else {

@@ -6,6 +6,7 @@ pub enum Tile {
     Exit,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct World {
     width: usize,
     height: usize,
@@ -53,6 +54,10 @@ impl World {
         (self.start.0 as f32 + 0.5, self.start.1 as f32 + 0.5)
     }
 
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
     pub fn tile_at(&self, x: isize, y: isize) -> Tile {
         if x < 0 || y < 0 || x >= self.width as isize || y >= self.height as isize {
             return Tile::Wall;
@@ -84,6 +89,14 @@ impl World {
         }
     }
 
+    pub fn set_all_doors(&mut self, open: bool) {
+        for tile in &mut self.tiles {
+            if let Tile::Door { open: state } = tile {
+                *state = open;
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn reachable_exit_from_start(&self) -> bool {
         let mut visited = vec![false; self.tiles.len()];
@@ -108,6 +121,20 @@ impl World {
             }
         }
         false
+    }
+
+    #[cfg(test)]
+    pub fn all_doors_open(&self) -> bool {
+        self.tiles
+            .iter()
+            .all(|tile| !matches!(tile, Tile::Door { open: false }))
+    }
+
+    #[cfg(test)]
+    pub fn all_doors_closed(&self) -> bool {
+        self.tiles
+            .iter()
+            .all(|tile| !matches!(tile, Tile::Door { open: true }))
     }
 }
 
