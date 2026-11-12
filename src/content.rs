@@ -383,6 +383,38 @@ fn valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
 }
 
+/// Flood-fill from a valid map start. Doors are traversable for solvability.
+pub(crate) fn reachable_cells(rows: &[String], start: (usize, usize)) -> Vec<bool> {
+    let width = rows.first().map_or(0, String::len);
+    let height = rows.len();
+    let mut visited = vec![false; width * height];
+    if width == 0 || start.0 >= width || start.1 >= height {
+        return visited;
+    }
+
+    let mut queue = VecDeque::from([start]);
+    visited[start.1 * width + start.0] = true;
+    while let Some((x, y)) = queue.pop_front() {
+        for (dx, dy) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
+            let nx = x as isize + dx;
+            let ny = y as isize + dy;
+            if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
+                continue;
+            }
+            let (nx, ny) = (nx as usize, ny as usize);
+            if rows[ny].as_bytes()[nx] == b'#' {
+                continue;
+            }
+            let index = ny * width + nx;
+            if !visited[index] {
+                visited[index] = true;
+                queue.push_back((nx, ny));
+            }
+        }
+    }
+    visited
+}
+
 fn validate_map(map: &MapDefinition, errors: &mut Vec<String>) {
     if map.rows.is_empty() {
         errors.push(format!("maps/{}.json: rows must not be empty", map.id));
@@ -436,30 +468,8 @@ fn validate_map(map: &MapDefinition, errors: &mut Vec<String>) {
         return;
     }
 
-    // Doors are passable for solvability: the player can open them in play.
     let start = starts[0];
-    let mut visited = vec![false; width * map.rows.len()];
-    let mut queue = VecDeque::from([start]);
-    visited[start.1 * width + start.0] = true;
-    while let Some((x, y)) = queue.pop_front() {
-        for (dx, dy) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
-            let nx = x as isize + dx;
-            let ny = y as isize + dy;
-            if nx < 0 || ny < 0 || nx >= width as isize || ny >= map.rows.len() as isize {
-                continue;
-            }
-            let (nx, ny) = (nx as usize, ny as usize);
-            let tile = map.rows[ny].as_bytes()[nx];
-            if tile == b'#' {
-                continue;
-            }
-            let index = ny * width + nx;
-            if !visited[index] {
-                visited[index] = true;
-                queue.push_back((nx, ny));
-            }
-        }
-    }
+    let visited = reachable_cells(&map.rows, start);
 
     for (x, y) in exits {
         if !visited[y * width + x] {
