@@ -1,7 +1,7 @@
 # Ashen Reach — Design Document
 
 **Project:** A first-person fantasy RPG built from scratch in Rust  
-**Status:** Milestone 3 complete; a short desktop dungeon objective and developer tools are available
+**Status:** Milestones 0–3 complete; playable technical prototype, no campaign content yet
 **Current target:** Linux desktop, with portability kept in view
 
 ## 1. Vision
@@ -12,7 +12,7 @@ The central constraint is to keep the engine specific to this game. Each technic
 
 ## 2. Current Prototype
 
-The current Rust binary opens a desktop window using Macroquad. It raycasts a small, fixed grid dungeon and supports first-person movement and turning. Movement is checked against walls one axis at a time, allowing the player to slide along them.
+The current Rust binary opens a desktop window using Macroquad. It raycasts a small, fixed grid dungeon and supports first-person movement, turning, doors, an exit, and a completion screen. A developer overlay, minimap, ray visualization, noclip, and command console are present. The game has one tiny hand-authored map and no enemy, inventory, quest, settlement, or campaign content.
 
 Run with `cargo run` from the project directory. Controls: `W`/`S` move, `A`/`D` or arrow keys turn, `Q`/`E` turn, and `Esc` quits.
 
@@ -51,7 +51,7 @@ application
   └── debug           overlays, commands, deterministic repro information
 ```
 
-Runtime code is split into `world`, `player`, `game`, `console`, `debug`, and `render` modules. `main.rs` translates Macroquad input into plain values and owns the fixed-step accumulator. Simulation modules use no drawing API; console parsing is pure and independent of rendering.
+Runtime code is split into `world`, `player`, `game`, `console`, `debug`, and `render` modules. `main.rs` translates Macroquad input into plain values and owns the fixed-step accumulator. Simulation modules use no drawing API; console parsing is pure and independent of rendering. This is a prototype structure, not a settled production architecture; future separation should follow actual gameplay needs.
 
 The main loop should use a fixed simulation step (target 60 Hz) with rendering decoupled from simulation. Clamp large frame deltas. Start with a single-threaded update loop; add background jobs only when world generation or rendering work is measurably costly.
 
@@ -127,77 +127,152 @@ Prioritize tools in this order:
 
 Validation should focus on behavior: map connectivity, collision bounds, deterministic generation, combat state transitions, save round trips, and content-reference validation. Keep unit tests for these systems independent of opening a window.
 
-## 12. Milestones
+## 12. Roadmap: Prototype to Retail Release
 
-### M0 — Window and dungeon view (complete)
+This roadmap describes product and content gates, not calendar estimates. Complete each gate with a working build and evidence that the feature works; do not treat the listed content quantities as a reason to generate low-quality filler. Content targets define a deliberately bounded indie RPG rather than a one-to-one recreation of *Daggerfall*'s enormous world.
 
-- Rust/Cargo project builds.
-- Macroquad desktop window opens.
-- Fixed grid is raycast into a first-person view.
-- Player can turn and move while blocked by walls.
+### Current baseline — M0 to M3 (complete)
 
-### M1 — Doors, exit, and completion (complete)
+- **M0, renderer and controls:** Rust/Macroquad window, raycast grid, movement and turning.
+- **M1, exploration objective:** fixed map, two doors, dead end, exit, win screen, elapsed time and tile-step count.
+- **M3, developer tools:** hidden F3 overlay, F4 noclip, F5 fog, F6 minimap, F7 ray visualization, console parser and commands, ten-line output log.
+- **Current content:** one small test map, no authored RPG narrative, no characters, no enemy or item catalog, no audio, no persistent save, no production assets.
+- **Baseline gate:** `cargo check`, `cargo clippy -- -D warnings`, and `cargo test` pass; desktop launch and controls are manually confirmed.
 
-- Add a separate game-state module and typed door/exit tiles.
-- Add Space/F interaction, nearby prompts, and distinct door/exit colors.
-- Build a fixed map with two doors, a dead end, and a reachable exit.
-- Show completion time and steps; allow restart with `R`.
-- Verify collision, interactions, map reachability, and deterministic fixed-step simulation with unit tests.
+### M4 — Core movement and interaction foundation
 
-**Decisions:** Count a step when the player crosses into a different grid cell. Completion time counts fixed simulation time, excluding time spent on the completion screen. Doors toggle open/closed and remain in their current state until the level restarts. The exit is traversable; interacting with it completes the level.
+- Stabilize map coordinates, player collision, door interactions, facing/target selection, and transitions between maps.
+- Replace prototype-only assumptions with validated map structures. Add explicit failure messages for invalid maps, starts, exits, and references.
+- Add keyboard remapping, mouse-look or an intentional keyboard-only camera decision, sensitivity settings, pause behavior, and an in-game settings screen.
+- Establish a reliable input/update/render boundary and headless simulation entry point. Keep the current grid raycaster unless a proven requirement demands another renderer.
+- **Content level:** 3–5 small handcrafted test maps covering corridors, rooms, doors, dead ends, stairs/vertical transitions if supported, and map transitions. These are engineering fixtures, not campaign locations.
+- **Exit gate:** movement and interactions behave consistently at variable frame rates; map tests validate bounds and connectivity; controls can be changed and restored.
 
-### M1.1 — Robust exploration polish
+### M5 — First combat vertical slice
 
-- Add a debug overlay with frame time and target tile.
-- Add further collision edge-case coverage and map authoring validation.
-- Keep simulation independent of Macroquad drawing and window state.
+- Implement health, damage, attack windup/recovery, hit detection, enemy awareness, pursuit, attack, death, and player defeat/recovery.
+- Add one readable combat HUD and a small set of interactions: attack, use a healing item, loot a defeated enemy, and leave the encounter.
+- Implement enemy line of sight and navigation on the current grid, with explicit behavior when paths are blocked.
+- Add debug commands for spawning, healing, and resetting test encounters; keep deterministic test seeds.
+- **Content level:** one 20–30 minute dungeon slice; 3 enemy archetypes (melee, ranged, durable); 2 weapon types; 1 healing consumable; 1 boss or elite encounter; 1 reward cache; a beginning, midpoint escalation, and exit. Use placeholder art/audio if needed, but finish and tune the loop.
+- **Exit gate:** a new player can complete the slice; combat outcomes are readable; no enemy can trap the player or make the exit impossible; headless combat tests cover damage, death, rewards, and deterministic outcomes.
 
-### M3 — Debug overlay and developer console (complete)
+### M6 — RPG character, inventory, and item systems
 
-- Add a hidden-by-default F3 stats overlay with FPS, frame time, fixed-step count, player, tile, game, and movement data.
-- Add F4 noclip, F5 fog, F6 minimap, and F7 minimap ray visualization.
-- Add a backtick command console with teleport, speed, FOV, door, win, restart, and help commands.
-- Keep the latest ten console lines visible while the console is open or overlay is shown.
-- Keep command parsing pure, settings in `DebugState`, and simulation overrides passed explicitly.
-- Validate command parsing, teleport bounds, door batches, noclip, and deterministic updates in tests.
+- Add a character sheet with a small set of understandable attributes and skills. Define how attributes affect movement, combat, defense, and dialogue/quest checks before expanding the list.
+- Add inventory, equipment slots, item use, item comparison, merchants or other acquisition/sale flow, currency, weight/capacity rules if desired, and complete item descriptions.
+- Add progression through experience or quest rewards, with a bounded level curve and respec/irreversibility decision documented.
+- Design a minimal set of status effects and resistance rules; ensure every effect has UI feedback and a counterplay.
+- **Content level:** 8–12 enemy archetypes; 25–40 useful items across weapons, armor, consumables, keys, and quest objects; 3 equipment tiers; 4 status effects; at least 2 viable character builds. Variants should change play meaningfully rather than only increase numbers.
+- **Exit gate:** inventory, equipment, progression, item use, and vendor transactions survive save/load; balance tests cover early, middle, and late character power.
 
-**Decisions:** Teleport arguments identify grid tile coordinates and place the player at the tile center; walls, closed doors, and out-of-bounds targets are rejected. Speed is clamped by validation to 0.1–10× and FOV to 30–120 degrees. Opening the console pauses simulation input and elapsed-time advancement. F7 enables the minimap automatically. Debug ray visualization draws 24 representative rays; the overlay reports the renderer's full ray count.
+### M7 — Saves, data formats, and authoring pipeline
 
-### M4 — First complete RPG loop
+- Introduce versioned saves with atomic writes, backup/recovery, validation, and a visible load/new-game flow. Persist player, equipment, inventory, quest flags, location, world seed, and world changes.
+- Move maps, items, enemies, dialogue, and quest definitions from Rust source into readable data files. Add a validator that reports file and field context for bad content.
+- Add content IDs, schema versions, localization-ready text keys, and deterministic generation/content version fields.
+- Add a headless content validation command and golden fixtures for save migration and generated maps.
+- **Content level:** representative samples of every planned content type, including two saves that migrate across a schema change, a short quest with alternate completion states, and deliberately invalid content fixtures.
+- **Exit gate:** the game loads a new or existing character, rejects invalid content safely, retains progress across restart, and can migrate supported earlier saves without silent data loss.
 
-- Add one enemy with a visible billboard sprite and simple behavior.
-- Implement attack, damage, death, and a reward pickup.
-- Add health and a minimal inventory screen.
-- Make a short dungeon completable from entrance to exit.
+### M8 — Quest, dialogue, and narrative framework
 
-### M5 — Persistence and authored content
+- Implement a serializable quest state machine with prerequisites, objectives, branching choices, fail/expire conditions where appropriate, rewards, and journal history.
+- Add dialogue interactions with choices, conditions, skill/attribute checks, and links to quest state. Separate authored text from code.
+- Build static analysis for missing IDs, unreachable objectives, impossible prerequisites, missing dialogue targets, and quests with no valid terminal state.
+- Decide and document the narrative tone, setting, factions, central conflict, player role, and the limits of procedural storytelling before large-scale writing.
+- **Content level:** 5 finished quests (main, faction, investigation, dungeon, and social examples), 10 named NPCs, one short dialogue hub, and one branching quest tested across every outcome. This is a writing/style pilot, not placeholder volume.
+- **Exit gate:** quests can be completed, failed, saved, loaded, and resumed; validators catch intentionally broken examples; dialogue remains comprehensible without relying on unstated player knowledge.
 
-- Add versioned save/load.
-- Move dungeon and enemy definitions into validated data files.
-- Add dialogue and a small quest with persistent state.
+### M9 — World travel and deterministic location generation
 
-### M6 — Deterministic procedural dungeon
+- Define the world map as authored regions connected by roads, routes, waterways, and travel points. Keep critical story geography authored and use generation for repeatable side content.
+- Implement seeded dungeon generation with room/corridor grammar, required entrances/exits, encounter pacing, loot budgets, and validation for connectivity and solvability.
+- Add location identity and generation-version rules so an existing save resolves to the same place after updates. Store player-made changes as deltas only after the generated base is stable.
+- Add town-block generation only if it supports the authored campaign; do not make critical NPCs, quests, or services depend on unconstrained generation.
+- **Content level:** 3 distinct regions; 2 dungeon themes; 10 handcrafted benchmark dungeons; a generated catalog capable of producing many validated variants; 3 travel routes with landmarks and encounter rules. Build a curated seed set that demonstrates the full range and a large automated seed-validation set.
+- **Exit gate:** seeds reproduce results; generated locations pass connectivity, spawn, encounter, and exit checks; hand-authored story locations remain stable; loading a save does not regenerate its visited places unexpectedly.
 
-- Generate room-and-corridor layouts from a seed.
-- Guarantee entrance-to-exit connectivity and valid spawn positions.
-- Add batch seed validation and deterministic regression fixtures.
+### M10 — Campaign and world content production
 
-### M7 — Town and broader world
+- Write and implement the complete main quest with a clear opening, escalating middle, climax, resolution, and credits. Ensure the player can finish without relying on random content.
+- Add factions with distinct motivations and quest arcs; define mutually exclusive outcomes and any reputation consequences.
+- Add towns, interiors, NPC routines or schedules where they improve the world, and side content that reinforces each region's identity.
+- Use content templates for reusable low-stakes tasks, while reserving authored quests for major characters and consequences. Generated content must not impersonate authored plot-critical events.
+- **Retail content target:** 3–4 regions; 1 capital and 5–7 smaller settlements; 20–30 authored dungeons/major sites plus validated procedural variants; 35–50 completed quests (about 10–15 main-story, 10–15 faction, and the remainder side/exploration); 20–30 named recurring NPCs plus reusable background population; 15–20 enemy archetypes; 60–100 meaningful items; 3–5 dungeon/environment themes. Scope should support a complete main campaign and substantial optional play, with an intended 15–25 hour main path and more for completionists.
+- **Content quality bar:** every main quest and faction quest receives an editorial pass, end-to-end playthrough, state-branch check, reward/balance pass, and localization-ready text review. No quest is counted as complete merely because its data file exists.
+- **Exit gate:** all required story content is present and completable; every region has a distinct gameplay and visual identity; no critical path depends on random generation or missable content without warning.
 
-- Add a compact town with enterable buildings and NPC interactions.
-- Add travel between locations and a world map representation.
-- Expand quests and progression only after the dungeon/town loop holds up.
+### M11 — Final art, audio, UI, and accessibility production
 
-## 13. Risks and Scope
+- Replace prototype colors and primitive geometry with a coherent, original visual language: environment materials, doors, props, enemy silhouettes/animations, UI icons, and readable interaction cues.
+- Establish an audio identity with ambience, movement, interactions, combat feedback, enemy cues, music themes, and mix controls. Provide silence-safe play and avoid audio-only critical information.
+- Finish title screen, new/load flow, settings, keybinding UI, inventory, character sheet, quest journal, map, dialogue, pause, death, completion, and credits screens.
+- Add accessibility options appropriate to the design: text size, contrast, color-safe cues, camera sensitivity, motion reduction where possible, input alternatives, and subtitle controls.
+- **Content level:** final assets for every production location/theme and enemy archetype; complete UI icon set; authored sound/music coverage for all gameplay states; full credits and third-party asset/license inventory. Avoid temporary placeholder art/audio in release-critical content.
+- **Exit gate:** visual and audio readability holds across supported resolutions and settings; accessibility options persist and are tested; all shipped assets have known provenance and rights.
 
-- **Engine drift:** keep each milestone tied to a playable feature; defer generic systems.
-- **Collision complexity:** specify movement before adding vertical movement or slopes, and test generated spaces at scale.
-- **Content burden:** use original, reusable data-driven content and build validation before volume.
-- **Save breakage:** version serialized data from the first persistent milestone.
-- **Rendering limits:** keep the raycaster until a specific game feature requires a different representation.
-- **Schedule:** a solo, content-rich RPG is a multi-year effort. Treat estimates as planning ranges, not promises; validate scope with small vertical slices.
+### M12 — Alpha: feature and content complete
 
-## 14. Immediate Next Work
+- Freeze the feature list. Only fix defects or make explicitly approved scope changes after this gate.
+- Integrate all campaign, RPG, save, settings, UI, audio, and debug systems into one start-to-credits build.
+- Run complete playthroughs with fresh saves and migrated saves; cover alternate quest branches, deaths, inventory limits, vendor flows, travel, dungeon seeds, and ending states.
+- Profile representative minimum and target hardware. Set measurable frame-time, memory, load-time, and save-time budgets; remove debug-only overhead from release builds.
+- **Content level:** all retail-target content implemented, even if some assets remain marked for polish. No missing main quest, faction arc, ending, tutorial, credits, or required UI screen.
+- **Exit gate:** full game can be completed from a clean install; no known progression blocker; all content validates; release scope and supported platforms are locked.
 
-1. Begin the first enemy and combat vertical slice, keeping its simulation testable without rendering.
-2. Keep validating authored map and content edge cases as systems expand.
+### M13 — Beta: polish and compatibility
+
+- Address usability, balance, performance, compatibility, accessibility, save integrity, and content defects. Add no large new systems.
+- Conduct external playtests with players unfamiliar with the project; observe navigation, combat understanding, quest comprehension, settings discoverability, and completion without coaching.
+- Test clean install, upgrade install, uninstall/reinstall, save backup/recovery, corrupted saves, controller/keyboard paths if supported, window resize/fullscreen, and supported OS/GPU configurations.
+- Run automated seed sweeps, quest-state validation, save migration tests, and repeatable regression scenarios in CI or an equivalent local gate.
+- **Content level:** final text edit, proofread, subtitle review, final encounter balance, final credits, and complete localization of the declared launch languages. Cut or simplify content that cannot meet the quality bar; do not ship broken volume to hit a count.
+- **Exit gate:** no known blocker or critical defect; high-severity defects have an accepted fix or documented resolution; save compatibility is verified; performance targets are met on declared minimum hardware.
+
+### M14 — Release candidate and retail delivery
+
+- Produce versioned, reproducible release builds for each declared platform and architecture. Sign packages where the platform supports signing.
+- Prepare installers/packages, first-run experience, default settings, save locations, crash logs with privacy controls, and an offline-capable play path.
+- Complete store assets and product copy, screenshots/trailer capture, system requirements, accessibility notes, support contact, privacy disclosure, EULA/third-party notices as required, and final credits.
+- Verify storefront build IDs, depot/package contents, update path, rollback/previous-save safety, and the final downloadable package from a clean user account.
+- **Content level:** all localized and credited launch content included; no development console, cheat commands, test maps, debug overlays, or unreleased assets exposed in the retail configuration unless deliberately retained as documented options.
+- **Exit gate:** release candidate installs, launches, saves, loads, updates, and completes on every declared platform; package contents and legal/asset records are approved; the release build is traceable to source and build instructions.
+
+### M15 — Launch and post-launch stabilization
+
+- Monitor crashes, save failures, performance reports, and progression blockers. Provide a clear support and issue-triage route.
+- Ship focused stability fixes with regression coverage and save compatibility checks. Keep patch notes and supported-version policy current.
+- Decide post-launch additions only after the shipped game is stable; do not treat future content as a substitute for launch completeness.
+- **Content level:** day-one fixes and essential localization corrections only; expansions or new regions are separate, fully scoped projects.
+- **Exit gate:** critical launch issues are resolved, supported saves remain safe, and the team can maintain the shipped build reproducibly.
+
+## 13. Retail Definition of Done
+
+Ashen Reach is retail-shippable when all of the following are true:
+
+- A player can install the game, start a new character, understand the controls and core systems, complete the main story, see a resolved ending/credits, quit, and later resume a valid save.
+- The declared retail content target is complete and has passed content validation, editorial review, and full-path playthroughs.
+- No known issue blocks installation, startup, saving/loading, a main quest, a required location, or an ending on supported configurations.
+- Settings and accessibility options work and persist. Input, UI, text, audio, and rendering remain usable on supported hardware and display sizes.
+- Builds are reproducible and versioned. The release package contains only intended assets and includes required credits, notices, system requirements, and support information.
+- Automated tests cover critical simulation and data rules; manual QA covers full playthroughs, content branches, compatibility, and the release package.
+
+## 14. Production Gates and Scope Control
+
+- Every milestone ends with a playable build and a written acceptance result. Keep simulation tests headless wherever practical.
+- Build one representative example of a system, validate the workflow, then scale content. Do not author dozens of quests before quest validation and save behavior are stable.
+- Freeze or reduce content counts when quality, accessibility, or main-path completion would otherwise suffer. A smaller complete game is preferable to a larger unfinished catalog.
+- Distinguish authored critical-path content from generated repeatable content. Procedural generation expands replay value; it does not replace authored pacing, characters, or resolution.
+- Track content by status: draft, implemented, validated, playtested, edited, final, and localized. Count only final, verified content toward release readiness.
+- Keep a release checklist for clean install, settings, saves, crash handling, performance, licenses, credits, localization, store package, and support.
+
+## 15. Main Risks and Responses
+
+- **Engine work displaces game work:** tie engine changes to the next playable gate and keep the grid raycaster until a real content requirement exceeds it.
+- **Content target exceeds production capacity:** protect the main story and quality bar; reduce optional volume before cutting testing, accessibility, or the ending.
+- **Procedural generation creates repetition or broken progression:** constrain generation to validated grammars and curated themes; keep critical characters and story beats authored.
+- **Save updates break player progress:** version the format early, test migrations and corrupted-file recovery, and retain a recoverable previous save.
+- **Input, UI, or rendering excludes players/configurations:** define supported platforms and minimum hardware; test settings and accessibility throughout production, not only in beta.
+- **Unlicensed or unclear assets block release:** track asset source, author, license, attribution, and redistribution rights as content enters the project.
+- **Retail polish is postponed until feature completion:** include accessibility, final UI, credits, settings, packaging, and QA as explicit release gates rather than optional cleanup.
