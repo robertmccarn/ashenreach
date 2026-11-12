@@ -1,7 +1,7 @@
 # Ashen Reach — Design Document
 
 **Project:** A first-person fantasy RPG built from scratch in Rust  
-**Status:** Milestone 2 complete; a short desktop dungeon objective is playable  
+**Status:** Milestone 3 complete; a short desktop dungeon objective and developer tools are available
 **Current target:** Linux desktop, with portability kept in view
 
 ## 1. Vision
@@ -51,7 +51,7 @@ application
   └── debug           overlays, commands, deterministic repro information
 ```
 
-Runtime code is split into `world`, `player`, `game`, and `render` modules. `main.rs` translates Macroquad input into a plain `Input` value and owns the fixed-step accumulator. Simulation modules use no drawing API; only `main.rs` and `render.rs` call Macroquad rendering functions.
+Runtime code is split into `world`, `player`, `game`, `console`, `debug`, and `render` modules. `main.rs` translates Macroquad input into plain values and owns the fixed-step accumulator. Simulation modules use no drawing API; console parsing is pure and independent of rendering.
 
 The main loop should use a fixed simulation step (target 60 Hz) with rendering decoupled from simulation. Clamp large frame deltas. Start with a single-threaded update loop; add background jobs only when world generation or rendering work is measurably costly.
 
@@ -152,26 +152,37 @@ Validation should focus on behavior: map connectivity, collision bounds, determi
 - Add further collision edge-case coverage and map authoring validation.
 - Keep simulation independent of Macroquad drawing and window state.
 
-### M2 — First complete RPG loop
+### M3 — Debug overlay and developer console (complete)
+
+- Add a hidden-by-default F3 stats overlay with FPS, frame time, fixed-step count, player, tile, game, and movement data.
+- Add F4 noclip, F5 fog, F6 minimap, and F7 minimap ray visualization.
+- Add a backtick command console with teleport, speed, FOV, door, win, restart, and help commands.
+- Keep the latest ten console lines visible while the console is open or overlay is shown.
+- Keep command parsing pure, settings in `DebugState`, and simulation overrides passed explicitly.
+- Validate command parsing, teleport bounds, door batches, noclip, and deterministic updates in tests.
+
+**Decisions:** Teleport arguments identify grid tile coordinates and place the player at the tile center; walls, closed doors, and out-of-bounds targets are rejected. Speed is clamped by validation to 0.1–10× and FOV to 30–120 degrees. Opening the console pauses simulation input and elapsed-time advancement. F7 enables the minimap automatically. Debug ray visualization draws 24 representative rays; the overlay reports the renderer's full ray count.
+
+### M4 — First complete RPG loop
 
 - Add one enemy with a visible billboard sprite and simple behavior.
 - Implement attack, damage, death, and a reward pickup.
 - Add health and a minimal inventory screen.
 - Make a short dungeon completable from entrance to exit.
 
-### M3 — Persistence and authored content
+### M5 — Persistence and authored content
 
 - Add versioned save/load.
 - Move dungeon and enemy definitions into validated data files.
 - Add dialogue and a small quest with persistent state.
 
-### M4 — Deterministic procedural dungeon
+### M6 — Deterministic procedural dungeon
 
 - Generate room-and-corridor layouts from a seed.
 - Guarantee entrance-to-exit connectivity and valid spawn positions.
 - Add batch seed validation and deterministic regression fixtures.
 
-### M5 — Town and broader world
+### M7 — Town and broader world
 
 - Add a compact town with enterable buildings and NPC interactions.
 - Add travel between locations and a world map representation.
@@ -188,5 +199,5 @@ Validation should focus on behavior: map connectivity, collision bounds, determi
 
 ## 14. Immediate Next Work
 
-1. Add a debug overlay with frame timing and target information.
-2. Add interaction and map validation edge cases before enemies or quest systems.
+1. Begin the first enemy and combat vertical slice, keeping its simulation testable without rendering.
+2. Keep validating authored map and content edge cases as systems expand.
