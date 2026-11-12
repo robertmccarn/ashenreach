@@ -1,11 +1,13 @@
 mod console;
+mod content;
 mod debug;
 mod game;
 mod player;
 mod render;
 mod world;
 
-use console::{SettingChange, parse_command};
+use console::{Command, SettingChange, parse_command};
+use content::ContentManager;
 use debug::DebugState;
 use game::{CommandResponse, Game, GameState, apply_command};
 use macroquad::prelude::*;
@@ -34,7 +36,7 @@ fn gameplay_input() -> Input {
     }
 }
 
-fn execute_console(debug: &mut DebugState, game: &mut Game) {
+fn execute_console(debug: &mut DebugState, game: &mut Game, content: &mut ContentManager) {
     let source = std::mem::take(&mut debug.console_input);
     if source.trim().is_empty() {
         return;
@@ -42,6 +44,20 @@ fn execute_console(debug: &mut DebugState, game: &mut Game) {
     debug.log(format!("> {source}"));
     match parse_command(&source) {
         Err(error) => debug.log(format!("Error: {error}")),
+        Ok(Command::ReloadContent) => match content.reload() {
+            Ok(()) => match content.map("prototype_dungeon").and_then(Game::from_map) {
+                Ok(reloaded) => {
+                    *game = reloaded;
+                    debug.log("Content reloaded; prototype dungeon restarted");
+                }
+                Err(error) => debug.log(format!("Content error: {error}")),
+            },
+            Err(errors) => {
+                for error in errors {
+                    debug.log(format!("Content error: {error}"));
+                }
+            }
+        },
         Ok(command) => match apply_command(game, command) {
             Err(error) => debug.log(format!("Error: {error}")),
             Ok(CommandResponse::Message(message)) => debug.log(message),
@@ -92,7 +108,16 @@ fn console_input(debug: &mut DebugState) -> bool {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let mut game = Game::new();
+    let mut content = match ContentManager::load("content") {
+        Ok(content) => content,
+        Err(errors) => panic!("Content validation failed:\n{}", errors.join("\n")),
+    };
+    let mut game = Game::from_map(
+        content
+            .map("prototype_dungeon")
+            .expect("prototype map missing"),
+    )
+    .expect("prototype map is invalid");
     let mut debug = DebugState::new();
     let mut accumulator = 0.0;
     let mut pending_interaction = false;
@@ -101,7 +126,7 @@ async fn main() {
         let console_was_open = debug.console_open;
         let console_consumed_frame = console_input(&mut debug) || console_was_open;
         if console_consumed_frame && debug.console_open && is_key_pressed(KeyCode::Enter) {
-            execute_console(&mut debug, &mut game);
+            execute_console(&mut debug, &mut game, &mut content);
             accumulator = 0.0;
         }
         if !debug.console_open && !console_consumed_frame {
@@ -109,7 +134,12 @@ async fn main() {
                 break;
             }
             if game.state == GameState::Completed && is_key_pressed(KeyCode::R) {
-                game = Game::new();
+                game = Game::from_map(
+                    content
+                        .map("prototype_dungeon")
+                        .expect("prototype map missing"),
+                )
+                .expect("prototype map is invalid");
                 accumulator = 0.0;
             }
             if is_key_pressed(KeyCode::F3) {

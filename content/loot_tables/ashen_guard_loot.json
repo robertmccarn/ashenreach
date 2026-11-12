@@ -1,0 +1,8 @@
+{
+  "id": "ashen_guard_loot",
+  "rolls": 2,
+  "entries": [
+    { "item_id": "iron_sword", "weight": 4, "quantity": 1 },
+    { "item_id": "healing_draught", "weight": 10, "quantity": 1 }
+  ]
+}

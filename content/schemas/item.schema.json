@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ashen Reach Item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "kind", "value", "weight"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["weapon", "armor", "consumable", "quest"] },
+    "value": { "type": "integer", "minimum": 0 },
+    "weight": { "type": "number", "minimum": 0 },
+    "effects": { "type": "array", "items": { "type": "string" } },
+    "damage": { "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } },
+    "description": { "type": "string" }
+  }
+}

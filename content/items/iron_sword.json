@@ -1,0 +1,9 @@
+{
+  "id": "iron_sword",
+  "name": "Iron Sword",
+  "kind": "weapon",
+  "value": 25,
+  "weight": 3.5,
+  "damage": { "min": 4, "max": 7 },
+  "description": "A dependable one-handed blade."
+}

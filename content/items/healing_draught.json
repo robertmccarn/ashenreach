@@ -1,0 +1,9 @@
+{
+  "id": "healing_draught",
+  "name": "Healing Draught",
+  "kind": "consumable",
+  "value": 18,
+  "weight": 0.2,
+  "effects": ["restore_health_25"],
+  "description": "Restores 25 health when consumed."
+}

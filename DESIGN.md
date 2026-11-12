@@ -1,8 +1,8 @@
 # Ashen Reach — Design Document
 
 **Project:** A first-person fantasy RPG built from scratch in Rust  
-**Status:** Milestones 0–3 complete; playable technical prototype, no campaign content yet
-**Current target:** Linux desktop, with portability kept in view
+**Status:** M0–M3 prototype complete; M4 architecture/content foundation in progress
+**Current target:** Windows development environment; Linux desktop remains a target to verify
 
 ## 1. Vision
 
@@ -12,11 +12,11 @@ The central constraint is to keep the engine specific to this game. Each technic
 
 ## 2. Current Prototype
 
-The current Rust binary opens a desktop window using Macroquad. It raycasts a small, fixed grid dungeon and supports first-person movement, turning, doors, an exit, and a completion screen. A developer overlay, minimap, ray visualization, noclip, and command console are present. The game has one tiny hand-authored map and no enemy, inventory, quest, settlement, or campaign content.
+The current Rust binary opens a desktop window using Macroquad. It raycasts a small grid dungeon and supports first-person movement, turning, doors, an exit, and a completion screen. A developer overlay, minimap, ray visualization, noclip, and command console are present. A JSON content pipeline now loads the prototype map, sample items, enemies, loot tables, and encounters. These samples are data-model fixtures; enemies, inventory, quests, settlements, and campaign gameplay are not implemented.
 
 Run with `cargo run` from the project directory. Controls: `W`/`S` move, `A`/`D` or arrow keys turn, `Q`/`E` turn, and `Esc` quits.
 
-The current objective is to find the exit, open two doors, and reach the exit tile. The level includes a dead-end side room. Completion shows elapsed simulation time and tile steps, and `R` restarts the level. The map is a fixed grid; enemies, combat, items, NPCs, quests, saves, audio, and procedural generation remain out of scope for this milestone.
+The current objective is to find the exit, open two doors, and reach the exit tile. The level includes a dead-end side room. Completion shows elapsed simulation time and tile steps, and `R` restarts the level. Combat, usable items, NPCs, quests, saves, audio, and procedural generation remain unimplemented.
 
 ## 3. Technical Choices
 
@@ -136,26 +136,27 @@ This roadmap describes product and content gates, not calendar estimates. Comple
 - **M0, renderer and controls:** Rust/Macroquad window, raycast grid, movement and turning.
 - **M1, exploration objective:** fixed map, two doors, dead end, exit, win screen, elapsed time and tile-step count.
 - **M3, developer tools:** hidden F3 overlay, F4 noclip, F5 fog, F6 minimap, F7 ray visualization, console parser and commands, ten-line output log.
-- **Current content:** one small test map, no authored RPG narrative, no characters, no enemy or item catalog, no audio, no persistent save, no production assets.
+- **Current content:** one small test map plus sample JSON item/enemy/loot/encounter definitions. These are pipeline fixtures, not playable RPG systems. No authored RPG narrative, characters, audio, persistent save, or production assets exist.
+- **M2, simulation and test foundation:** fixed-step simulation and headless unit tests; this was present in the baseline but omitted from the original milestone list.
 - **Baseline gate:** `cargo check`, `cargo clippy -- -D warnings`, and `cargo test` pass; desktop launch and controls are manually confirmed.
 
-### M4 — Core movement and interaction foundation
+### M4 — Architecture and content foundation (in progress)
 
-- Stabilize map coordinates, player collision, door interactions, facing/target selection, and transitions between maps.
-- Replace prototype-only assumptions with validated map structures. Add explicit failure messages for invalid maps, starts, exits, and references.
-- Add keyboard remapping, mouse-look or an intentional keyboard-only camera decision, sensitivity settings, pause behavior, and an in-game settings screen.
-- Establish a reliable input/update/render boundary and headless simulation entry point. Keep the current grid raycaster unless a proven requirement demands another renderer.
-- **Content level:** 3–5 small handcrafted test maps covering corridors, rooms, doors, dead ends, stairs/vertical transitions if supported, and map transitions. These are engineering fixtures, not campaign locations.
-- **Exit gate:** movement and interactions behave consistently at variable frame rates; map tests validate bounds and connectivity; controls can be changed and restored.
+- **Completed in this workstream:** Serde DTOs, JSON content directories and schemas, sample definitions, O(1) indexes, strict parsing, cross-reference checks, map loading, startup validation, and transactional `reload_content` command.
+- Define stable typed runtime IDs and separate immutable definitions from mutable instances before inventory or saves depend on them.
+- Split simulation ownership by domain as needed; keep `Game` the deterministic orchestration root and add a simple typed event queue when the first cross-system interaction is implemented. Do not create an ECS or speculative framework.
+- Resolve map/interaction edge cases and decide input policy (keyboard-only or mouse look), pause behavior, and supported platform baseline.
+- Add a headless content validation entry point and CI checks; validate map connectivity and report actionable file/field errors.
+- **Exit gate:** content validates from a clean checkout, reload failures preserve the last good set, runtime IDs are stable, and the first combat slice can use content without embedding definitions in simulation code.
 
-### M5 — First combat vertical slice
+### M5 — First combat vertical slice (next gameplay milestone)
 
 - Implement health, damage, attack windup/recovery, hit detection, enemy awareness, pursuit, attack, death, and player defeat/recovery.
 - Add one readable combat HUD and a small set of interactions: attack, use a healing item, loot a defeated enemy, and leave the encounter.
 - Implement enemy line of sight and navigation on the current grid, with explicit behavior when paths are blocked.
 - Add debug commands for spawning, healing, and resetting test encounters; keep deterministic test seeds.
 - **Content level:** one 20–30 minute dungeon slice; 3 enemy archetypes (melee, ranged, durable); 2 weapon types; 1 healing consumable; 1 boss or elite encounter; 1 reward cache; a beginning, midpoint escalation, and exit. Use placeholder art/audio if needed, but finish and tune the loop.
-- **Exit gate:** a new player can complete the slice; combat outcomes are readable; no enemy can trap the player or make the exit impossible; headless combat tests cover damage, death, rewards, and deterministic outcomes.
+- **Exit gate:** a new player can complete the slice; combat outcomes are readable; no enemy can trap the player or make the exit impossible; headless combat tests cover damage, death, rewards, and deterministic outcomes. Persistence is a later gate and must not be implied complete here.
 
 ### M6 — RPG character, inventory, and item systems
 
@@ -276,3 +277,17 @@ Ashen Reach is retail-shippable when all of the following are true:
 - **Input, UI, or rendering excludes players/configurations:** define supported platforms and minimum hardware; test settings and accessibility throughout production, not only in beta.
 - **Unlicensed or unclear assets block release:** track asset source, author, license, attribution, and redistribution rights as content enters the project.
 - **Retail polish is postponed until feature completion:** include accessibility, final UI, credits, settings, packaging, and QA as explicit release gates rather than optional cleanup.
+
+## 16. Audit Reconciliation and Immediate Implementation Plan
+
+The November 12, 2026 repository audit was written against baseline commit `d571b91` and predates the current content-pipeline changes. Its assessment of the prototype and absent RPG gameplay remains useful. Its statement that no external content loader exists is stale: maps, items, enemies, loot tables, and encounters now have JSON DTOs, schemas, sample data, startup validation, cross-reference checks, and a console reload command. The sample enemies and items are not yet connected to gameplay. The audit's recommendation to build M4 architecture/content foundations before M5 combat is the sequencing authority for work from this point; the earlier M4 movement foundation / M5 combat text has been replaced accordingly. Retail readiness percentages in the audit are directional judgments, not project metrics; use milestone gates and playable evidence as the progress measure.
+
+### Next implementation sequence
+
+1. **Close M4 content/tooling gaps:** add a non-graphical `validate-content` command, schema-version policy, line/field-focused validation messages, map connectivity checks, and invalid-content fixtures. Keep startup validation and hot reload behavior covered by tests.
+2. **Define gameplay contracts before parallel work:** add stable newtype IDs, definition-versus-instance rules, module ownership, deterministic update order, and a typed event queue only where cross-system behavior needs it. Record these contracts in `AGENTS.md` so independent coding work shares the same interfaces.
+3. **Build the smallest combat loop:** player health and attack, one enemy archetype with simple grid navigation, damage/death, one weapon, one consumable, and a fixed encounter loaded from JSON. Keep simulation headless and emit typed events for defeat and reward.
+4. **Playtest and tune the slice:** add a readable combat HUD and only the feedback needed to understand attacks, damage, death, and rewards. Verify the encounter is completable and repeatable before expanding enemy or item counts.
+5. **Then implement persistence and inventory:** define versioned save DTOs independently of runtime structs; add atomic writes, backup/recovery, and round-trip/migration tests before quests and campaign content depend on saves.
+
+Each step ends with a runnable build, tests for behavior and malformed data, and a short acceptance note. Avoid expanding content volume until the authoring and gameplay loop has been validated by a human playthrough. The audit's one-month schedule is a planning estimate, not a commitment; sequence by the gates above and revise effort after the combat prototype is playable.

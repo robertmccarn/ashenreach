@@ -21,6 +21,14 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         let world = World::prototype_dungeon();
+        Self::from_world(world)
+    }
+
+    pub fn from_map(map: &crate::content::MapDefinition) -> Result<Self, String> {
+        Ok(Self::from_world(World::from_map(map)?))
+    }
+
+    fn from_world(world: World) -> Self {
         let (x, y) = world.start_position();
         Self {
             state: GameState::Playing,
@@ -105,8 +113,9 @@ pub fn apply_command(game: &mut Game, command: Command) -> Result<CommandRespons
             *game = Game::new();
             Ok(CommandResponse::Message("Level restarted".to_owned()))
         }
+        Command::ReloadContent => Err("reload_content must be handled by the content service".to_owned()),
         Command::Help => Ok(CommandResponse::Message(
-            "Commands: tp <x> <y>, speed <n>, fov <deg>, open_all, close_all, win, restart, help"
+            "Commands: tp <x> <y>, speed <n>, fov <deg>, open_all, close_all, win, restart, reload_content, help"
                 .to_owned(),
         )),
     }

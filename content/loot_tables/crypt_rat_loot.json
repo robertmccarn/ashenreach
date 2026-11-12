@@ -1,0 +1,8 @@
+{
+  "id": "crypt_rat_loot",
+  "rolls": 1,
+  "entries": [
+    { "item_id": "healing_draught", "weight": 15, "quantity": 1 },
+    { "item_id": "ashen_key", "weight": 1, "quantity": 1 }
+  ]
+}

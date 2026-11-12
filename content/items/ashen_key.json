@@ -1,0 +1,8 @@
+{
+  "id": "ashen_key",
+  "name": "Ashen Key",
+  "kind": "quest",
+  "value": 0,
+  "weight": 0.1,
+  "description": "A key engraved with the Reach's broken crown."
+}

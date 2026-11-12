@@ -39,10 +39,15 @@ open_all         Open every door
 close_all        Close every door
 win              Complete the level
 restart          Restart the level
+reload_content   Validate and reload JSON content, then restart the prototype map
 help             List commands
 ```
 
 The console retains the latest ten output lines. `F3` displays FPS, frame time, fixed-step count, player position/facing, tile underfoot and ahead, game state, elapsed time, steps, and active debug settings. Speed accepts `0.1`–`10`; FOV accepts `30`–`120` degrees. F7 displays 24 representative ray paths on the minimap; the renderer casts 240 rays per frame.
+
+## Authored content
+
+All authored definitions live under [`content/`](content/README.md): the current map plus sample items, enemies, loot tables, and encounters. `ContentManager` parses and validates this directory before play, indexes definitions by their string IDs, and rejects malformed JSON, duplicate IDs, invalid values, maps, and broken cross-references. Add a content type by creating its strict Serde DTO and index in `src/content.rs`, registering its directory and validation rules there, and adding a JSON Schema and sample file under `content/`. Use `reload_content` in the developer console to validate and atomically reload files at runtime; it restarts the prototype map after a successful reload.
 
 ## Current shape
 

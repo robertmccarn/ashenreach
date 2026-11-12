@@ -1,0 +1,8 @@
+{
+  "id": "gatehouse_patrol",
+  "name": "Gatehouse Patrol",
+  "enemies": [
+    { "enemy_id": "crypt_rat", "count": 2 },
+    { "enemy_id": "ashen_guard", "count": 1 }
+  ]
+}

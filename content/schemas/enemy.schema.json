@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "title": "Ashen Reach Enemy", "type": "object", "additionalProperties": false,
+  "required": ["id", "name", "stats", "loot_table_id"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" }, "name": { "type": "string" }, "loot_table_id": { "type": "string" }, "abilities": { "type": "array", "items": { "type": "string" } },
+    "stats": { "type": "object", "additionalProperties": false, "required": ["health", "attack", "defense", "move_speed"], "properties": { "health": { "type": "integer", "minimum": 1 }, "attack": { "type": "integer", "minimum": 0 }, "defense": { "type": "integer", "minimum": 0 }, "move_speed": { "type": "number", "exclusiveMinimum": 0 } } }
+  }
+}

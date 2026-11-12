@@ -7,6 +7,7 @@ pub enum Command {
     CloseAll,
     Win,
     Restart,
+    ReloadContent,
     Help,
 }
 
@@ -65,8 +66,9 @@ pub fn parse_command(input: &str) -> Result<Command, String> {
         "close_all" if args.is_empty() => Ok(Command::CloseAll),
         "win" if args.is_empty() => Ok(Command::Win),
         "restart" if args.is_empty() => Ok(Command::Restart),
+        "reload_content" if args.is_empty() => Ok(Command::ReloadContent),
         "help" if args.is_empty() => Ok(Command::Help),
-        "open_all" | "close_all" | "win" | "restart" | "help" => {
+        "open_all" | "close_all" | "win" | "restart" | "reload_content" | "help" => {
             Err(format!("{name} takes no arguments"))
         }
         _ => Err(format!("unknown command: {name}")),
@@ -86,6 +88,7 @@ mod tests {
         assert_eq!(parse_command("close_all"), Ok(Command::CloseAll));
         assert_eq!(parse_command("win"), Ok(Command::Win));
         assert_eq!(parse_command("restart"), Ok(Command::Restart));
+        assert_eq!(parse_command("reload_content"), Ok(Command::ReloadContent));
         assert_eq!(parse_command("help"), Ok(Command::Help));
     }
 

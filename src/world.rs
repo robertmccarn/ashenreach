@@ -16,19 +16,26 @@ pub struct World {
 
 impl World {
     pub fn prototype_dungeon() -> Self {
-        let rows = [
-            "###############",
-            "#S...D...D...X#",
-            "###.#########.#",
-            "#...#.........#",
-            "#...#########.#",
-            "#############.#",
-            "###############",
-        ];
-        let width = rows[0].len();
+        let map = serde_json::from_str(include_str!("../content/maps/prototype_dungeon.json"))
+            .expect("embedded prototype map must be valid JSON");
+        Self::from_map(&map).expect("embedded prototype map must be valid")
+    }
+
+    pub fn from_map(map: &crate::content::MapDefinition) -> Result<Self, String> {
+        if map.rows.is_empty() {
+            return Err(format!("map `{}` has no rows", map.id));
+        }
+        let width = map.rows[0].len();
+        if width == 0 {
+            return Err(format!("map `{}` has an empty row", map.id));
+        }
         let mut start = (1, 1);
-        let mut tiles = Vec::with_capacity(width * rows.len());
-        for (y, row) in rows.iter().enumerate() {
+        let mut start_count = 0;
+        let mut tiles = Vec::with_capacity(width * map.rows.len());
+        for (y, row) in map.rows.iter().enumerate() {
+            if row.len() != width {
+                return Err(format!("map `{}` row {y} has inconsistent width", map.id));
+            }
             for (x, cell) in row.bytes().enumerate() {
                 tiles.push(match cell {
                     b'#' => Tile::Wall,
@@ -36,18 +43,28 @@ impl World {
                     b'X' => Tile::Exit,
                     b'S' => {
                         start = (x, y);
+                        start_count += 1;
                         Tile::Floor
                     }
-                    _ => Tile::Floor,
+                    b'.' => Tile::Floor,
+                    _ => {
+                        return Err(format!(
+                            "map `{}` row {y} has invalid tile `{}`",
+                            map.id, cell as char
+                        ));
+                    }
                 });
             }
         }
-        Self {
+        if start_count != 1 {
+            return Err(format!("map `{}` must contain exactly one start", map.id));
+        }
+        Ok(Self {
             width,
-            height: rows.len(),
+            height: map.rows.len(),
             tiles,
             start,
-        }
+        })
     }
 
     pub fn start_position(&self) -> (f32, f32) {

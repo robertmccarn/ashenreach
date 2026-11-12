@@ -1,0 +1,7 @@
+{
+  "id": "ashen_guard",
+  "name": "Ashen Guard",
+  "stats": { "health": 48, "attack": 9, "defense": 3, "move_speed": 1.1 },
+  "loot_table_id": "ashen_guard_loot",
+  "abilities": ["shield_bash", "guard"]
+}

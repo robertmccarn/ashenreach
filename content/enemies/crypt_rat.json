@@ -1,0 +1,7 @@
+{
+  "id": "crypt_rat",
+  "name": "Crypt Rat",
+  "stats": { "health": 12, "attack": 3, "defense": 0, "move_speed": 1.8 },
+  "loot_table_id": "crypt_rat_loot",
+  "abilities": ["bite"]
+}
