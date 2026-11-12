@@ -566,6 +566,13 @@ mod tests {
     }
 
     #[test]
+    fn schema_rejects_missing_required_fields() {
+        let fixture = Fixture::new();
+        fixture.write("items/test_item.json", r#"{"id":"test_item","name":"Test Item","kind":"weapon","weight":1.0}"#);
+        assert!(fixture.errors().iter().any(|error| error.contains("items/test_item.json")));
+    }
+
+    #[test]
     fn duplicate_ids_are_rejected() {
         let fixture = Fixture::new();
         fixture.write("items/second_file.json", r#"{"id":"test_item","name":"Duplicate","kind":"weapon","value":1,"weight":1.0}"#);
@@ -600,6 +607,13 @@ mod tests {
         let errors = fixture.errors().join("\n");
         assert!(errors.contains("exactly one"));
         assert!(errors.contains("at least one"));
+    }
+
+    #[test]
+    fn exit_is_reachable_through_a_door() {
+        let fixture = Fixture::new();
+        fixture.write("maps/test_map.json", r#"{"id":"test_map","name":"Test Map","rows":["######","#S.DX#","######"]}"#);
+        assert!(ContentManager::load(&fixture.0).is_ok());
     }
 
     #[test]
