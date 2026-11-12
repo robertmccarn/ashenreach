@@ -116,28 +116,23 @@ impl World {
 
     #[cfg(test)]
     pub fn reachable_exit_from_start(&self) -> bool {
-        let mut visited = vec![false; self.tiles.len()];
-        let mut queue = VecDeque::from([self.start]);
-        visited[self.start.1 * self.width + self.start.0] = true;
-        while let Some((x, y)) = queue.pop_front() {
-            if self.tile_at(x as isize, y as isize) == Tile::Exit {
-                return true;
-            }
-            for (dx, dy) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
-                let nx = x as isize + dx;
-                let ny = y as isize + dy;
-                let tile = self.tile_at(nx, ny);
-                if matches!(tile, Tile::Wall) {
-                    continue;
-                }
-                let index = ny as usize * self.width + nx as usize;
-                if !visited[index] {
-                    visited[index] = true;
-                    queue.push_back((nx as usize, ny as usize));
-                }
-            }
-        }
-        false
+        let rows: Vec<String> = (0..self.height)
+            .map(|y| {
+                (0..self.width)
+                    .map(|x| match self.tile_at(x as isize, y as isize) {
+                        Tile::Wall => '#',
+                        Tile::Floor if (x, y) == self.start => 'S',
+                        Tile::Floor => '.',
+                        Tile::Door { .. } => 'D',
+                        Tile::Exit => 'X',
+                    })
+                    .collect()
+            })
+            .collect();
+        let reachable = crate::content::reachable_cells(&rows, self.start);
+        self.tiles.iter().enumerate().all(|(index, tile)| {
+            *tile != Tile::Exit || reachable[index]
+        })
     }
 
     #[cfg(test)]
@@ -168,5 +163,3 @@ mod tests {
         assert_eq!(world.tile_at(9, 1), Tile::Door { open: false });
     }
 }
-#[cfg(test)]
-use std::collections::VecDeque;
