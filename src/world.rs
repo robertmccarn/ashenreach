@@ -1,3 +1,5 @@
+use crate::reachability::flood_fill;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tile {
     Floor,
@@ -59,12 +61,19 @@ impl World {
         if start_count != 1 {
             return Err(format!("map `{}` must contain exactly one start", map.id));
         }
-        Ok(Self {
+        let world = Self {
             width,
             height: map.rows.len(),
             tiles,
             start,
-        })
+        };
+        if !world.reachable_exit_from_start() {
+            return Err(format!(
+                "map `{}` must have at least one exit and every exit must be reachable from its start",
+                map.id
+            ));
+        }
+        Ok(world)
     }
 
     pub fn start_position(&self) -> (f32, f32) {
@@ -114,30 +123,17 @@ impl World {
         }
     }
 
-    #[cfg(test)]
     pub fn reachable_exit_from_start(&self) -> bool {
-        let mut visited = vec![false; self.tiles.len()];
-        let mut queue = VecDeque::from([self.start]);
-        visited[self.start.1 * self.width + self.start.0] = true;
-        while let Some((x, y)) = queue.pop_front() {
-            if self.tile_at(x as isize, y as isize) == Tile::Exit {
-                return true;
-            }
-            for (dx, dy) in [(1isize, 0isize), (-1, 0), (0, 1), (0, -1)] {
-                let nx = x as isize + dx;
-                let ny = y as isize + dy;
-                let tile = self.tile_at(nx, ny);
-                if matches!(tile, Tile::Wall) {
-                    continue;
-                }
-                let index = ny as usize * self.width + nx as usize;
-                if !visited[index] {
-                    visited[index] = true;
-                    queue.push_back((nx as usize, ny as usize));
-                }
-            }
-        }
-        false
+        let reachable = flood_fill(self.width, self.height, self.start, |x, y| {
+            !matches!(self.tiles[y * self.width + x], Tile::Wall)
+        })
+        .expect("a loaded world must have valid dimensions");
+        self.tiles.contains(&Tile::Exit)
+            && self
+                .tiles
+                .iter()
+                .zip(reachable)
+                .all(|(tile, is_reachable)| *tile != Tile::Exit || is_reachable)
     }
 
     #[cfg(test)]
@@ -167,6 +163,17 @@ mod tests {
         assert_eq!(world.tile_at(5, 1), Tile::Door { open: false });
         assert_eq!(world.tile_at(9, 1), Tile::Door { open: false });
     }
+
+    #[test]
+    fn world_rejects_a_map_with_an_unreachable_exit() {
+        let map = crate::content::MapDefinition {
+            id: "disconnected".to_owned(),
+            name: "Disconnected".to_owned(),
+            rows: vec!["S#X".to_owned()],
+        };
+
+        let error = World::from_map(&map).unwrap_err();
+        assert!(error.contains("disconnected"));
+        assert!(error.contains("every exit must be reachable"));
+    }
 }
-#[cfg(test)]
-use std::collections::VecDeque;

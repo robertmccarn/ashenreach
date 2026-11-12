@@ -3,6 +3,7 @@ mod content;
 mod debug;
 mod game;
 mod player;
+mod reachability;
 mod render;
 mod world;
 
