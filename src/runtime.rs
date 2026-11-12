@@ -97,6 +97,43 @@ mod tests {
         fs::write(root.join("maps/prototype_dungeon.json"), map).unwrap();
     }
 
+    fn assert_representative_content_unchanged(
+        current: &RuntimeSession,
+        previous: &RuntimeSession,
+    ) {
+        for (kind, id, current_definition, previous_definition) in [
+            (
+                "map",
+                "prototype_dungeon",
+                format!("{:?}", current.content.maps["prototype_dungeon"]),
+                format!("{:?}", previous.content.maps["prototype_dungeon"]),
+            ),
+            (
+                "item",
+                "iron_sword",
+                format!("{:?}", current.content.items["iron_sword"]),
+                format!("{:?}", previous.content.items["iron_sword"]),
+            ),
+            (
+                "enemy",
+                "crypt_rat",
+                format!("{:?}", current.content.enemies["crypt_rat"]),
+                format!("{:?}", previous.content.enemies["crypt_rat"]),
+            ),
+            (
+                "encounter",
+                "gatehouse_patrol",
+                format!("{:?}", current.content.encounters["gatehouse_patrol"]),
+                format!("{:?}", previous.content.encounters["gatehouse_patrol"]),
+            ),
+        ] {
+            assert_eq!(
+                current_definition, previous_definition,
+                "{kind} `{id}` changed while replacement failed"
+            );
+        }
+    }
+
     #[test]
     fn successful_reload_replaces_content_and_runtime_together() {
         let fixture = Fixture::new();
@@ -121,6 +158,7 @@ mod tests {
         assert!(session.reload("prototype_dungeon").is_err());
         assert_eq!(session.game, previous.game);
         assert_eq!(session.content.root(), previous.content.root());
+        assert_representative_content_unchanged(&session, &previous);
     }
 
     #[test]
@@ -138,6 +176,7 @@ mod tests {
         );
         assert_eq!(session.game, previous.game);
         assert_eq!(session.content.root(), previous.content.root());
+        assert_representative_content_unchanged(&session, &previous);
     }
 
     #[test]
@@ -156,9 +195,11 @@ mod tests {
     fn failed_restart_preserves_the_previous_runtime_state() {
         let fixture = Fixture::new();
         let mut session = RuntimeSession::load(&fixture.root, "prototype_dungeon").unwrap();
-        let previous_game = session.game.clone();
+        let previous = session.clone();
         assert!(session.restart("missing_runtime_map").is_err());
-        assert_eq!(session.game, previous_game);
+        assert_eq!(session.game, previous.game);
+        assert_eq!(session.content.root(), previous.content.root());
+        assert_representative_content_unchanged(&session, &previous);
     }
 
     #[test]

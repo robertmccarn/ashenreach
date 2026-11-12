@@ -54,6 +54,10 @@ fn execute_console(debug: &mut DebugState, session: &mut runtime::RuntimeSession
                 }
             }
         },
+        Ok(Command::Restart) => match session.restart("prototype_dungeon") {
+            Ok(()) => debug.log("Level restarted"),
+            Err(error) => debug.log(format!("Error: {error}")),
+        },
         Ok(command) => match apply_command(&mut session.game, command) {
             Err(error) => debug.log(format!("Error: {error}")),
             Ok(CommandResponse::Message(message)) => debug.log(message),
@@ -254,7 +258,57 @@ fn draw_completion(game: &Game) {
 
 #[cfg(test)]
 mod tests {
-    use crate::debug::DebugState;
+    use crate::{debug::DebugState, execute_console, runtime::RuntimeSession};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+
+    struct ContentFixture(PathBuf);
+
+    impl ContentFixture {
+        fn new() -> Self {
+            let id = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "ashen-reach-console-restart-test-{}-{id}",
+                std::process::id()
+            ));
+            copy_directory(
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("content"),
+                &root,
+            )
+            .unwrap();
+            fs::write(
+                root.join("maps/prototype_dungeon.json"),
+                r######"{"id":"prototype_dungeon","name":"Console Restart Fixture","rows":["#####","#S.X#","#####"]}"######,
+            )
+            .unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for ContentFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            let target = destination.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_directory(&entry.path(), &target)?;
+            } else {
+                fs::copy(entry.path(), target)?;
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn debug_state_starts_hidden_with_default_overrides() {
@@ -264,5 +318,31 @@ mod tests {
         assert!(state.fog);
         assert_eq!(state.speed_multiplier, 1.0);
         assert_eq!(state.fov_degrees, 60.0);
+    }
+
+    #[test]
+    fn console_restart_dispatches_through_the_active_runtime_session() {
+        let fixture = ContentFixture::new();
+        let mut session = RuntimeSession::load(&fixture.0, "prototype_dungeon").unwrap();
+        assert_eq!(session.game.world.dimensions(), (5, 3));
+        session.game.elapsed_seconds = 7.0;
+        let mut debug = DebugState::new();
+        debug.console_input = "restart".to_owned();
+
+        execute_console(&mut debug, &mut session);
+
+        assert_eq!(session.game.elapsed_seconds, 0.0);
+        assert_eq!(session.content.root(), fixture.0.as_path());
+        assert_eq!(session.game.world.dimensions(), (5, 3));
+        assert_eq!(
+            session.content.maps["prototype_dungeon"].name,
+            "Console Restart Fixture"
+        );
+        assert!(
+            debug
+                .console_log
+                .iter()
+                .any(|line| line == "Level restarted")
+        );
     }
 }
