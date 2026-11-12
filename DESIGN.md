@@ -286,13 +286,14 @@ The November 12, 2026 repository audit was written against baseline commit `d571
 
 This plan follows the engineering instructions for M4 completion and one M5 combat slice. It does not include full inventory UI, campaign systems, save/load, or content-volume production. Keep each stage reviewable, preserve the current Macroquad renderer, and do not mark a stage complete until its behavior is integrated and verified.
 
-#### Stage A — Content contract and validation
+#### Stage A — Content contract and validation (A1–A2 integrated; A3 in review)
 
 - Add a shared content manifest with an explicit content-format version; reject missing or unsupported versions. Keep this independent of future save-format versions and defer migrations until a real format transition is needed.
 - Keep the handwritten JSON Schemas and DTOs for now; validate every shipped definition against its matching schema in tests. Enforce `deny_unknown_fields`, required fields, numeric ranges, and Rust-side cross-references. Document schema changes and add fixtures/tests that catch drift.
 - Validate rectangular maps, legal glyphs, exactly one start, at least one exit, and exit reachability. Treat doors as traversable for solvability because the player can open them; report disconnected exits with map ID and coordinates. Reuse one connectivity implementation.
 - Add invalid fixtures for malformed JSON, unsupported schema version, unknown fields, duplicate IDs, missing references, invalid numeric values, malformed maps, and unreachable exits. Error messages should name the source file and field or map coordinate where available.
-- **Gate:** valid shipped data passes schema and semantic validation; each invalid fixture fails with an actionable diagnostic; content validation remains callable without graphics.
+- **Completed:** A1 manifest/schema enforcement and A2 semantic/map/runtime validation are integrated in `test-main`. The A3 review branch adds regression coverage for malformed documents and failed reload preservation, plus the content authoring guide in `content/README.md`.
+- **Gate:** valid shipped data passes schema and semantic validation; invalid fixtures fail with actionable diagnostics; runtime map construction independently enforces the same structural and connectivity contract; content validation remains callable without graphics.
 
 #### Stage B — Runtime loading, reload, and developer workflow
 

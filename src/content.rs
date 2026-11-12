@@ -655,6 +655,16 @@ mod tests {
     }
 
     #[test]
+    fn malformed_content_document_reports_file_line_and_column() {
+        let fixture = Fixture::new();
+        fixture.write("items/item.json", "{");
+
+        let errors = fixture.errors().join("\n").replace('\\', "/");
+        assert!(errors.contains("items/item.json:1:1"), "{errors}");
+        assert!(errors.contains("invalid items JSON"), "{errors}");
+    }
+
+    #[test]
     fn missing_manifest_version_is_rejected() {
         let fixture = Fixture::new();
         fixture.write("manifest.json", "{}");
@@ -664,6 +674,24 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("format_version"))
         );
+    }
+
+    #[test]
+    fn failed_reload_preserves_the_last_valid_content() {
+        let fixture = Fixture::new();
+        let mut content = ContentManager::load(&fixture.0).expect("fixture should load");
+        assert!(content.items.contains_key("test_item"));
+        assert!(content.maps.contains_key("test_map"));
+
+        fixture.write("items/item.json", "{");
+        let errors = content.reload().expect_err("malformed reload must fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.replace('\\', "/").contains("items/item.json"))
+        );
+        assert!(content.items.contains_key("test_item"));
+        assert!(content.maps.contains_key("test_map"));
     }
 
     #[test]
