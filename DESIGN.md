@@ -282,12 +282,48 @@ Ashen Reach is retail-shippable when all of the following are true:
 
 The November 12, 2026 repository audit was written against baseline commit `d571b91` and predates the current content-pipeline changes. Its assessment of the prototype and absent RPG gameplay remains useful. Its statement that no external content loader exists is stale: maps, items, enemies, loot tables, and encounters now have JSON DTOs, schemas, sample data, startup validation, cross-reference checks, and a console reload command. The sample enemies and items are not yet connected to gameplay. The audit's recommendation to build M4 architecture/content foundations before M5 combat is the sequencing authority for work from this point; the earlier M4 movement foundation / M5 combat text has been replaced accordingly. Retail readiness percentages in the audit are directional judgments, not project metrics; use milestone gates and playable evidence as the progress measure.
 
-### Next implementation sequence
+### Execution plan and acceptance gates
 
-1. **Close M4 content/tooling gaps:** add a non-graphical `validate-content` command, schema-version policy, line/field-focused validation messages, map connectivity checks, and invalid-content fixtures. Keep startup validation and hot reload behavior covered by tests.
-2. **Define gameplay contracts before parallel work:** add stable newtype IDs, definition-versus-instance rules, module ownership, deterministic update order, and a typed event queue only where cross-system behavior needs it. Record these contracts in `AGENTS.md` so independent coding work shares the same interfaces.
-3. **Build the smallest combat loop:** player health and attack, one enemy archetype with simple grid navigation, damage/death, one weapon, one consumable, and a fixed encounter loaded from JSON. Keep simulation headless and emit typed events for defeat and reward.
-4. **Playtest and tune the slice:** add a readable combat HUD and only the feedback needed to understand attacks, damage, death, and rewards. Verify the encounter is completable and repeatable before expanding enemy or item counts.
-5. **Then implement persistence and inventory:** define versioned save DTOs independently of runtime structs; add atomic writes, backup/recovery, and round-trip/migration tests before quests and campaign content depend on saves.
+This plan follows the engineering instructions for M4 completion and one M5 combat slice. It does not include full inventory UI, campaign systems, save/load, or content-volume production. Keep each stage reviewable, preserve the current Macroquad renderer, and do not mark a stage complete until its behavior is integrated and verified.
 
-Each step ends with a runnable build, tests for behavior and malformed data, and a short acceptance note. Avoid expanding content volume until the authoring and gameplay loop has been validated by a human playthrough. The audit's one-month schedule is a planning estimate, not a commitment; sequence by the gates above and revise effort after the combat prototype is playable.
+#### Stage A — Content contract and validation
+
+- Add a shared content manifest with an explicit content-format version; reject missing or unsupported versions. Keep this independent of future save-format versions and defer migrations until a real format transition is needed.
+- Keep the handwritten JSON Schemas and DTOs for now; validate every shipped definition against its matching schema in tests. Enforce `deny_unknown_fields`, required fields, numeric ranges, and Rust-side cross-references. Document schema changes and add fixtures/tests that catch drift.
+- Validate rectangular maps, legal glyphs, exactly one start, at least one exit, and exit reachability. Treat doors as traversable for solvability because the player can open them; report disconnected exits with map ID and coordinates. Reuse one connectivity implementation.
+- Add invalid fixtures for malformed JSON, unsupported schema version, unknown fields, duplicate IDs, missing references, invalid numeric values, malformed maps, and unreachable exits. Error messages should name the source file and field or map coordinate where available.
+- **Gate:** valid shipped data passes schema and semantic validation; each invalid fixture fails with an actionable diagnostic; content validation remains callable without graphics.
+
+#### Stage B — Runtime loading, reload, and developer workflow
+
+- Resolve content paths from an explicit development root and the executable/package resource location, with a clear error naming attempted paths. Keep path policy outside simulation.
+- Build candidate content completely before swapping it into the active manager. On any parse/schema/semantic failure, retain the previous manager and game state. Restart the player only after a fully successful reload.
+- Route both console restart and `R` through one game-reset function built from the active content definitions.
+- Add `cargo run -- validate-content`; it must exit before Macroquad initialization, print diagnostics, and return failure status for invalid content. Reuse the same loader/validator used at startup and reload.
+- **Gate:** run the command from repository root and a different working directory; prove failure leaves the last good content and active game unchanged, and success loads the replacement map and restarts once.
+
+#### Stage C — CI and project contracts
+
+- Add GitHub Actions for pushes and pull requests to the primary branch: `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets`, and `cargo run -- validate-content`.
+- Introduce human-readable newtype IDs for item, enemy, encounter, map, and loot table references. Parse serialized IDs at the content boundary; use typed IDs in simulation APIs and keep filenames unrelated to identity.
+- Keep authored definitions immutable. Add runtime instances only for mutable state: enemy health/position/state and item quantity/durability/runtime identity. Instances hold typed definition IDs rather than cloned definitions.
+- Keep `Game` the deterministic simulation orchestrator. Document update order. Add domain modules only when they own real behavior; use a small typed event queue when combat must report defeat/reward across systems.
+- **Gate:** all CI commands pass; invalid IDs fail safely; runtime state references definitions without mutating or duplicating them; simulation tests need no window.
+
+#### Stage D — Headless combat implementation
+
+- Create combat state and rules in simulation-only Rust. Add player health, attack input, JSON-defined weapon damage, one JSON-defined enemy, defense-aware damage, enemy death, player defeat, encounter completion/reset, and one consumable that heals up to maximum health.
+- Spawn composition from the existing encounter JSON. Generate the reward from the enemy's referenced JSON loot table using a deterministic seed; prevent dead enemies from attacking or rewarding more than once.
+- Implement enemy awareness and pursuit on the existing grid. Start with deterministic grid pathfinding; closed doors and walls block movement. Repath or wait safely when a route is blocked. Attack only in range, with a defined cooldown.
+- Keep balance constants and authored stats/data in definitions. Any unavoidable rules constants (cooldowns, reach, seed policy) belong in documented simulation rules, not duplicated content.
+- Emit observable combat results for hit/miss, damage, death, defeat, healing, and reward so UI and tests can report outcomes without owning combat logic.
+- **Gate:** tests cover attack damage, defense, enemy attack and range, death idempotency, loot table selection, healing limits, collision/pathfinding, defeat, deterministic repeatability, and encounter reset.
+
+#### Stage E — Integrated playable encounter
+
+- Build one compact encounter with an opening approach, a combat escalation, a useful reward, and an obvious exit. Use the existing encounter data format and a repeatable starting state; do not add large placeholder catalogs.
+- Add only the HUD and placeholder feedback needed to communicate attack timing, hits and damage, enemy death, received damage, healing, reward, and player defeat. Rendering reads simulation state/events.
+- Perform a human playthrough to confirm the encounter is completable, the controls and outcomes are understandable, and resetting produces the same encounter. Record the acceptance result and known limitations.
+- **Gate:** one complete combat loop runs in the desktop build, all automated gates pass, and the human playthrough confirms completion and reset.
+
+After Stage E, the next milestone is inventory and versioned persistence design, followed by broader RPG progression. Do not fold those systems into this assignment. The schedule is intentionally expressed as gates rather than week estimates; revise effort from the measured implementation and playtest results.
